@@ -224,7 +224,8 @@ impl KnowledgeStore for SqliteStore {
 			"SELECT d.id, d.source_type, d.source_repo, d.title,
 				snippet(documents_fts, 1, '<mark>', '</mark>', '...', 64) as snippet,
 				d.author, d.created_at,
-				bm25(documents_fts, 5.0, 1.0) as score
+				bm25(documents_fts, 5.0, 1.0) as score,
+				d.source_id
 			 FROM documents_fts
 			 JOIN documents d ON d.rowid = documents_fts.rowid
 			 WHERE documents_fts MATCH ?1",
@@ -295,11 +296,29 @@ impl KnowledgeStore for SqliteStore {
 			.query_map(param_refs.as_slice(), |row| {
 				let source_type_str: String = row.get(1)?;
 				let created_at_str: String = row.get(6)?;
+				let source_type =
+					SourceType::from_str(&source_type_str).unwrap_or(SourceType::GithubIssue);
+				let source_repo: Option<String> = row.get(2)?;
+				let source_id: String = row.get(8)?;
+				let doc = Document {
+					id: String::new(),
+					source_type: source_type.clone(),
+					source_repo: source_repo.clone(),
+					source_id,
+					title: None,
+					body: None,
+					author: None,
+					author_id: None,
+					created_at: chrono::Utc::now(),
+					updated_at: None,
+					parent_id: None,
+					metadata: None,
+					seq: None,
+				};
 				Ok(SearchResult {
 					id: row.get(0)?,
-					source_type: SourceType::from_str(&source_type_str)
-						.unwrap_or(SourceType::GithubIssue),
-					source_repo: row.get(2)?,
+					source_type,
+					source_repo,
 					title: row.get(3)?,
 					snippet: row.get(4)?,
 					author: row.get(5)?,
@@ -307,35 +326,11 @@ impl KnowledgeStore for SqliteStore {
 						.map(|dt| dt.with_timezone(&chrono::Utc))
 						.unwrap_or_else(|_| chrono::Utc::now()),
 					score: row.get::<_, f64>(7)?.abs(),
-					url: None, // Populated below
+					url: doc.url(),
 					concepts: Vec::new(),
 				})
 			})?
 			.collect::<rusqlite::Result<Vec<_>>>()?;
-
-		// Populate URLs
-		let results: Vec<SearchResult> = results
-			.into_iter()
-			.map(|mut r| {
-				let doc = Document {
-					id: r.id.clone(),
-					source_type: r.source_type.clone(),
-					source_repo: r.source_repo.clone(),
-					source_id: String::new(),
-					title: None,
-					body: None,
-					author: None,
-					author_id: None,
-					created_at: r.created_at,
-					updated_at: None,
-					parent_id: None,
-					metadata: None,
-					seq: None,
-				};
-				r.url = doc.url();
-				r
-			})
-			.collect();
 
 		let total_count = results.len() as u32;
 		Ok(SearchResults { results, total_count })
