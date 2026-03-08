@@ -1,6 +1,9 @@
 pub mod delving;
 pub mod github;
 pub mod irc;
+pub mod mailing_list;
+pub mod optech;
+pub mod specs;
 
 use anyhow::Result;
 use async_trait::async_trait;
