@@ -27,8 +27,9 @@ incremental sync.
 - **Hybrid deployment**: remote API as primary (always up-to-date, embedding
   support). Local DB mode behind a common `KnowledgeStore` trait for Phase 2
   and for testing.
-- **Incremental change tracking**: `change_log` table from day one for future
-  client sync support via `GET /changes?since=<seq>`.
+- **Internal change tracking**: `change_log` table from day one for internal
+  ordering, debugging, and replay during ingestion. Client-facing incremental
+  sync (e.g., `GET /changes?since=<seq>`) is deferred to a future phase.
 
 ## 3. Non-Goals
 
@@ -39,6 +40,9 @@ incremental sync.
 - Not a real-time system -- hourly freshness is sufficient.
 - No write/mutation API for end users -- read-only query interface.
 - No authentication/multi-tenancy in Phase 1.
+- No client-side incremental sync in Phases 1--4 -- the hosted API is the
+  sole query interface. Local database mode with incremental sync is a
+  future-phase goal.
 
 ## 4. Data Sources
 
@@ -165,7 +169,7 @@ incremental sync.
 |                                                              |
 |  Backends:                                                   |
 |    RemoteApiStore  -- HTTP client to BKB service (default)   |
-|    LocalSqliteStore -- direct DB queries (Phase 2 / tests)   |
+|    LocalSqliteStore -- direct DB queries (integration tests) |
 +--------------------------------------------------------------+
 ```
 
@@ -200,7 +204,8 @@ CREATE TABLE documents (
     -- Source-specific metadata (JSON)
     metadata        TEXT,               -- labels, state, merge status, etc.
 
-    -- Change tracking
+    -- Change tracking (internal ordering/debug; client change feed
+    -- is a future phase)
     seq             INTEGER,            -- monotonic sequence from change_log
 
     UNIQUE(source_type, source_repo, source_id)
@@ -212,6 +217,12 @@ CREATE INDEX idx_documents_author ON documents(author);
 CREATE INDEX idx_documents_created ON documents(created_at);
 CREATE INDEX idx_documents_seq ON documents(seq);
 ```
+
+**Note on `url`:** The `documents` table does not store a URL. The canonical
+URL for each document is derived at query time from `source_type`,
+`source_repo`, and `source_id` (e.g., a `github_issue` with `source_repo`
+`bitcoin/bitcoin` and `source_id` `12345` maps to
+`https://github.com/bitcoin/bitcoin/issues/12345`).
 
 **`source_type` values:**
 
@@ -366,7 +377,9 @@ CREATE INDEX idx_chunks_doc ON embedding_chunks(doc_id);
 
 Embedding model: `bge-base-en-v1.5` (768 dimensions), run on CPU via ONNX
 Runtime (`ort` crate). Initial embedding of ~2M chunks takes ~15-30 minutes
-on CPU. Incremental updates (a few hundred chunks per hour) are sub-second.
+on CPU with batched inference (batch size ~256). Serial inference would take
+significantly longer (~5-6 hours). Incremental updates (a few hundred chunks
+per hour) are sub-second.
 
 ### 6.6 Change Tracking
 
@@ -383,8 +396,10 @@ Change tracking is handled at the application level (not SQL triggers) for
 performance. Every upsert to `documents` also appends to `change_log` and
 updates the document's `seq` field within the same transaction.
 
-The `change_log` is periodically compacted: entries older than 30 days (or
-older than the oldest known client cursor) are deleted.
+The `change_log` is periodically compacted: entries older than 30 days are
+deleted. The change_log exists for internal use (ingestion ordering,
+debugging, replay). Client-facing incremental sync via this table is
+deferred to a future phase.
 
 ### 6.7 Sync State
 
@@ -615,7 +630,17 @@ Chronological timeline of a concept across all sources:
 }
 ```
 
-### 8.7 `GET /changes`
+**Note on `bkb_find_commit`:** The MCP tool `bkb_find_commit` (Section 9)
+does not have a dedicated HTTP endpoint. It is implemented as a specialized
+`/search` query with `source_type=commit` and additional post-processing to
+include associated PR and discussion context.
+
+### 8.7 `GET /changes` *(Deferred -- Future Phase)*
+
+> **Not implemented in Phases 1--4.** Documented here for future reference.
+> The `change_log` table exists from day one for internal use, but this
+> client-facing endpoint will be added when the client sync protocol is
+> designed.
 
 Incremental change feed for client sync.
 
@@ -725,7 +750,8 @@ pub trait KnowledgeStore: Send + Sync {
     async fn find_commit(
         &self, query: &str, repo: Option<&str>,
     ) -> Result<Vec<CommitContext>>;
-    async fn get_changes(&self, since_seq: u64, limit: u32) -> Result<ChangeSet>;
+    // Future: async fn get_changes(&self, since_seq: u64, limit: u32) -> Result<ChangeSet>;
+    // Will be added when the client sync protocol is implemented.
 }
 ```
 
@@ -733,8 +759,9 @@ pub trait KnowledgeStore: Send + Sync {
 
 - `RemoteApiStore` -- HTTP client that proxies to the BKB service. Default
   backend for the MCP server.
-- `LocalSqliteStore` -- direct SQLite queries. Used for Phase 2 local mode
-  and for integration tests.
+- `LocalSqliteStore` -- direct SQLite queries. Used for integration tests
+  from Phase 1. User-facing local mode (where end users run a local DB
+  with sync) is a future-phase goal.
 
 ## 11. Rust Crate Structure
 
@@ -848,14 +875,23 @@ bitcoin-knowledge-base/
 - API: `/timeline/{concept}`
 - MCP: `bkb_timeline`, `bkb_find_commit`
 
-### Phase 4: Local Mode & Polish
+### Phase 4: Polish & Local Testing
 
-- `/changes` API endpoint
-- `LocalSqliteStore` implementation
+- `LocalSqliteStore` implementation (for integration tests and local
+  development; user-facing local mode is a future goal)
 - Snapshot export tooling
-- Incremental sync client (`bkb sync`)
 - Adaptive poll intervals
 - Monitoring / health checks
+
+### Future Phase: Client Sync
+
+> Out of scope for the initial implementation. Tracked here for reference.
+
+- `/changes` API endpoint (Section 8.7)
+- `get_changes()` method on `KnowledgeStore` trait
+- Incremental sync client (`bkb sync`)
+- Client cursor tracking in `change_log` compaction policy
+- `LocalSqliteStore` as a full user-facing backend with sync
 
 ## 14. Testing Strategy
 
@@ -982,3 +1018,41 @@ under 60 seconds across all sources.
 | Embedding vectors (768-dim, ~2M chunks) | ~3-4 GB |
 | Change log (30-day rolling window) | ~50 MB |
 | **Total** | **~11-14 GB** |
+
+## 16. Development Workflow
+
+### 16.1 Commit Discipline
+
+Each logical step should be an individual git commit. Every commit must
+build (`cargo check`) and pass tests (`cargo test`) independently -- no
+"fix it in the next commit" allowed. This ensures bisectability and clean
+review history.
+
+### 16.2 Code Formatting
+
+All Rust code must be formatted with `cargo fmt` before committing. All
+crates in the workspace share a single `rustfmt.toml` at the workspace
+root, adopted from
+[ldk-node's `rustfmt.toml`](https://github.com/lightningdevkit/ldk-node/blob/main/rustfmt.toml):
+
+```toml
+use_small_heuristics = "Max"
+fn_params_layout = "Compressed"
+hard_tabs = true
+use_field_init_shorthand = true
+max_width = 100
+match_block_trailing_comma = true
+format_code_in_doc_comments = true
+comment_width = 100
+format_macro_matchers = true
+group_imports = "StdExternalCrate"
+reorder_imports = true
+imports_granularity = "Module"
+normalize_comments = true
+normalize_doc_attributes = true
+style_edition = "2021"
+```
+
+Key settings: hard tabs for indentation, 100-character line width, grouped
+and reordered imports (std -> external -> crate), compressed function
+parameters, and formatted doc comments.
