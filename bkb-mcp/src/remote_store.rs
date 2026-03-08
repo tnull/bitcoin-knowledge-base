@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 
-use bkb_core::model::{DocumentContext, SearchParams, SearchResults};
+use bkb_core::model::{DocumentContext, Reference, SearchParams, SearchResults};
 use bkb_core::store::KnowledgeStore;
 
 /// KnowledgeStore implementation that proxies to the BKB HTTP API.
@@ -78,6 +78,63 @@ impl KnowledgeStore for RemoteApiStore {
 
 		let ctx: DocumentContext =
 			response.json().await.context("failed to parse document response")?;
+		Ok(Some(ctx))
+	}
+
+	async fn get_references(
+		&self, entity: &str, ref_type: Option<&str>, limit: u32,
+	) -> Result<Vec<Reference>> {
+		let mut url =
+			format!("{}/references/{}?limit={}", self.base_url, urlencoded(entity), limit);
+
+		if let Some(rt) = ref_type {
+			url.push_str(&format!("&ref_type={}", urlencoded(rt)));
+		}
+
+		let response = self.client.get(&url).send().await.context("failed to query BKB API")?;
+
+		if !response.status().is_success() {
+			let body = response.text().await.unwrap_or_default();
+			anyhow::bail!("BKB API returned error: {}", body);
+		}
+
+		response.json().await.context("failed to parse references response")
+	}
+
+	async fn lookup_bip(&self, number: u32) -> Result<Option<DocumentContext>> {
+		let url = format!("{}/bip/{}", self.base_url, number);
+
+		let response = self.client.get(&url).send().await.context("failed to query BKB API")?;
+
+		if response.status() == reqwest::StatusCode::NOT_FOUND {
+			return Ok(None);
+		}
+
+		if !response.status().is_success() {
+			let body = response.text().await.unwrap_or_default();
+			anyhow::bail!("BKB API returned error: {}", body);
+		}
+
+		let ctx: DocumentContext = response.json().await.context("failed to parse BIP response")?;
+		Ok(Some(ctx))
+	}
+
+	async fn lookup_bolt(&self, number: u32) -> Result<Option<DocumentContext>> {
+		let url = format!("{}/bolt/{}", self.base_url, number);
+
+		let response = self.client.get(&url).send().await.context("failed to query BKB API")?;
+
+		if response.status() == reqwest::StatusCode::NOT_FOUND {
+			return Ok(None);
+		}
+
+		if !response.status().is_success() {
+			let body = response.text().await.unwrap_or_default();
+			anyhow::bail!("BKB API returned error: {}", body);
+		}
+
+		let ctx: DocumentContext =
+			response.json().await.context("failed to parse BOLT response")?;
 		Ok(Some(ctx))
 	}
 }

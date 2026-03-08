@@ -10,7 +10,9 @@ use tracing::info;
 
 use bkb_ingest::queue::{JobQueue, Priority, SyncJob};
 use bkb_ingest::rate_limiter::RateLimiter;
+use bkb_ingest::sources::delving::DelvingSyncSource;
 use bkb_ingest::sources::github::{GitHubCommentSyncSource, GitHubIssueSyncSource};
+use bkb_ingest::sources::irc::IrcLogSyncSource;
 use bkb_ingest::sources::SyncSource;
 use bkb_store::sqlite::SqliteStore;
 
@@ -112,7 +114,46 @@ async fn main() -> Result<()> {
 			info!(repo = %format!("{}/{}", owner, repo), "registered GitHub sync sources");
 		}
 
-		info!(sources = repos.len() * 2, "ingestion scheduler starting");
+		// Register IRC sources
+		for channel in config.irc_channels() {
+			let irc_source = IrcLogSyncSource::new(&channel);
+			let irc_interval = irc_source.poll_interval();
+			queue
+				.add_job(SyncJob {
+					source_id: format!("irc:{}", channel),
+					source: Box::new(irc_source),
+					priority: Priority::Low,
+					cursor: None,
+					next_run: Instant::now(),
+					retry_count: 0,
+					base_interval: irc_interval,
+				})
+				.await;
+			info!(channel = %channel, "registered IRC sync source");
+		}
+
+		// Register Delving Bitcoin source
+		if config.sync_delving() {
+			let delving_source = DelvingSyncSource::new();
+			let delving_interval = delving_source.poll_interval();
+			queue
+				.add_job(SyncJob {
+					source_id: "delving:delvingbitcoin.org".to_string(),
+					source: Box::new(delving_source),
+					priority: Priority::Medium,
+					cursor: None,
+					next_run: Instant::now(),
+					retry_count: 0,
+					base_interval: delving_interval,
+				})
+				.await;
+			info!("registered Delving Bitcoin sync source");
+		}
+
+		let total_sources = repos.len() * 2
+			+ config.irc_channels().len()
+			+ if config.sync_delving() { 1 } else { 0 };
+		info!(sources = total_sources, "ingestion scheduler starting");
 
 		let queue_handle = tokio::spawn(async move {
 			if let Err(e) = queue.run().await {

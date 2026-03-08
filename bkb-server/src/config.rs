@@ -11,7 +11,6 @@ impl Config {
 	/// Return the list of GitHub repos to sync as (owner, repo) pairs.
 	pub fn github_repos(&self) -> Vec<(String, String)> {
 		if self.dev_subset {
-			// Dev subset: just one small repo for fast iteration
 			vec![("lightningdevkit".to_string(), "ldk-sample".to_string())]
 		} else {
 			vec![
@@ -39,5 +38,23 @@ impl Config {
 				("bitcoinops".to_string(), "bitcoinops.github.io".to_string()),
 			]
 		}
+	}
+
+	/// Return IRC channels to sync.
+	pub fn irc_channels(&self) -> Vec<String> {
+		if self.dev_subset {
+			vec!["bitcoin-core-dev".to_string()]
+		} else {
+			vec![
+				"bitcoin-core-dev".to_string(),
+				"lightning-dev".to_string(),
+				"bitcoin-wizards".to_string(),
+			]
+		}
+	}
+
+	/// Whether to sync Delving Bitcoin.
+	pub fn sync_delving(&self) -> bool {
+		true
 	}
 }

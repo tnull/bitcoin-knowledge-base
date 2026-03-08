@@ -196,6 +196,118 @@ impl SqliteStore {
 	}
 }
 
+impl SqliteStore {
+	/// Shared implementation for `lookup_bip` and `lookup_bolt`.
+	///
+	/// Finds the spec document by `source_type` and `source_id`, then collects all
+	/// incoming references via `to_external LIKE '{PREFIX}-{number}'`.
+	async fn lookup_spec(
+		&self, source_type: SourceType, number: u32,
+	) -> Result<Option<DocumentContext>> {
+		let conn = self.conn.lock().await;
+		let source_id = number.to_string();
+
+		// Find the spec document.
+		let doc = conn
+			.query_row(
+				"SELECT id, source_type, source_repo, source_id, title, body,
+				 author, author_id, created_at, updated_at, parent_id, metadata, seq
+				 FROM documents WHERE source_type = ?1 AND source_id = ?2",
+				rusqlite::params![source_type.as_str(), &source_id],
+				|row| {
+					let source_type_str: String = row.get(1)?;
+					let created_at_str: String = row.get(8)?;
+					let updated_at_str: Option<String> = row.get(9)?;
+					let metadata_str: Option<String> = row.get(11)?;
+					Ok(Document {
+						id: row.get(0)?,
+						source_type: SourceType::from_str(&source_type_str)
+							.unwrap_or(SourceType::GithubIssue),
+						source_repo: row.get(2)?,
+						source_id: row.get(3)?,
+						title: row.get(4)?,
+						body: row.get(5)?,
+						author: row.get(6)?,
+						author_id: row.get(7)?,
+						created_at: chrono::DateTime::parse_from_rfc3339(&created_at_str)
+							.map(|dt| dt.with_timezone(&chrono::Utc))
+							.unwrap_or_else(|_| chrono::Utc::now()),
+						updated_at: updated_at_str.and_then(|s| {
+							chrono::DateTime::parse_from_rfc3339(&s)
+								.ok()
+								.map(|dt| dt.with_timezone(&chrono::Utc))
+						}),
+						parent_id: row.get(10)?,
+						metadata: metadata_str.and_then(|s| serde_json::from_str(&s).ok()),
+						seq: row.get(12)?,
+					})
+				},
+			)
+			.optional()?;
+
+		let doc = match doc {
+			Some(d) => d,
+			None => return Ok(None),
+		};
+
+		let url = doc.url();
+		let doc_id = &doc.id;
+
+		// Fetch outgoing refs from this document.
+		let mut stmt = conn.prepare(
+			"SELECT id, from_doc_id, to_doc_id, ref_type, to_external, context
+			 FROM refs WHERE from_doc_id = ?1",
+		)?;
+		let outgoing_refs = stmt
+			.query_map([doc_id], |row| {
+				let ref_type_str: String = row.get(3)?;
+				Ok(Reference {
+					id: row.get(0)?,
+					from_doc_id: row.get(1)?,
+					to_doc_id: row.get(2)?,
+					ref_type: RefType::from_str(&ref_type_str).unwrap_or(RefType::MentionsIssue),
+					to_external: row.get(4)?,
+					context: row.get(5)?,
+				})
+			})?
+			.collect::<rusqlite::Result<Vec<_>>>()?;
+
+		// Fetch incoming refs: both via to_doc_id (resolved) and to_external (unresolved).
+		let prefix = match source_type {
+			SourceType::Bip => "BIP",
+			SourceType::Bolt => "BOLT",
+			_ => unreachable!(),
+		};
+		let external_pattern = format!("{}-{}", prefix, number);
+
+		let mut stmt = conn.prepare(
+			"SELECT id, from_doc_id, to_doc_id, ref_type, to_external, context
+			 FROM refs WHERE to_doc_id = ?1 OR to_external = ?2",
+		)?;
+		let incoming_refs = stmt
+			.query_map(rusqlite::params![doc_id, &external_pattern], |row| {
+				let ref_type_str: String = row.get(3)?;
+				Ok(Reference {
+					id: row.get(0)?,
+					from_doc_id: row.get(1)?,
+					to_doc_id: row.get(2)?,
+					ref_type: RefType::from_str(&ref_type_str).unwrap_or(RefType::MentionsIssue),
+					to_external: row.get(4)?,
+					context: row.get(5)?,
+				})
+			})?
+			.collect::<rusqlite::Result<Vec<_>>>()?;
+
+		// Fetch concept tags.
+		let mut stmt =
+			conn.prepare("SELECT concept_slug FROM concept_mentions WHERE doc_id = ?1")?;
+		let concepts: Vec<String> =
+			stmt.query_map([doc_id], |row| row.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+
+		Ok(Some(DocumentContext { document: doc, url, outgoing_refs, incoming_refs, concepts }))
+	}
+}
+
 /// Helper trait for `rusqlite::OptionalExtension`-like behavior.
 trait OptionalRow<T> {
 	fn optional(self) -> rusqlite::Result<Option<T>>;
@@ -429,6 +541,65 @@ impl KnowledgeStore for SqliteStore {
 			stmt.query_map([id], |row| row.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
 
 		Ok(Some(DocumentContext { document: doc, url, outgoing_refs, incoming_refs, concepts }))
+	}
+
+	async fn get_references(
+		&self, entity: &str, ref_type: Option<&str>, limit: u32,
+	) -> Result<Vec<Reference>> {
+		let conn = self.conn.lock().await;
+
+		let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = match ref_type {
+			Some(rt) => (
+				"SELECT r.id, r.from_doc_id, r.to_doc_id, r.ref_type, r.to_external, r.context \
+				 FROM refs r \
+				 WHERE r.to_external = ?1 AND r.ref_type = ?2 \
+				 ORDER BY r.id \
+				 LIMIT ?3"
+					.to_string(),
+				vec![
+					Box::new(entity.to_string()),
+					Box::new(rt.to_string()),
+					Box::new(limit as i64),
+				],
+			),
+			None => (
+				"SELECT r.id, r.from_doc_id, r.to_doc_id, r.ref_type, r.to_external, r.context \
+				 FROM refs r \
+				 WHERE r.to_external = ?1 \
+				 ORDER BY r.id \
+				 LIMIT ?2"
+					.to_string(),
+				vec![Box::new(entity.to_string()), Box::new(limit as i64)],
+			),
+		};
+
+		let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+			params.iter().map(|b| b.as_ref()).collect();
+
+		let mut stmt = conn.prepare(&sql)?;
+		let refs = stmt
+			.query_map(param_refs.as_slice(), |row| {
+				let ref_type_str: String = row.get(3)?;
+				Ok(Reference {
+					id: row.get(0)?,
+					from_doc_id: row.get(1)?,
+					to_doc_id: row.get(2)?,
+					ref_type: RefType::from_str(&ref_type_str).unwrap_or(RefType::MentionsIssue),
+					to_external: row.get(4)?,
+					context: row.get(5)?,
+				})
+			})?
+			.collect::<rusqlite::Result<Vec<_>>>()?;
+
+		Ok(refs)
+	}
+
+	async fn lookup_bip(&self, number: u32) -> Result<Option<DocumentContext>> {
+		self.lookup_spec(SourceType::Bip, number).await
+	}
+
+	async fn lookup_bolt(&self, number: u32) -> Result<Option<DocumentContext>> {
+		self.lookup_spec(SourceType::Bolt, number).await
 	}
 }
 

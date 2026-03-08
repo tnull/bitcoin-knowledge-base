@@ -111,6 +111,9 @@ async fn handle_tool_call(
 	let result = match tool_name {
 		"bkb_search" => tool_search(store, &arguments).await,
 		"bkb_get_document" => tool_get_document(store, &arguments).await,
+		"bkb_get_references" => tool_get_references(store, &arguments).await,
+		"bkb_lookup_bip" => tool_lookup_bip(store, &arguments).await,
+		"bkb_lookup_bolt" => tool_lookup_bolt(store, &arguments).await,
 		_ => Err(anyhow::anyhow!("unknown tool: {}", tool_name)),
 	};
 
@@ -196,6 +199,44 @@ async fn tool_get_document(
 	}
 }
 
+async fn tool_get_references(
+	store: &impl KnowledgeStore, args: &serde_json::Value,
+) -> Result<String> {
+	let entity = args
+		.get("entity")
+		.and_then(|v| v.as_str())
+		.ok_or_else(|| anyhow::anyhow!("missing required parameter: entity"))?;
+	let ref_type = args.get("ref_type").and_then(|v| v.as_str());
+	let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as u32;
+
+	let refs = store.get_references(entity, ref_type, limit).await?;
+	Ok(serde_json::to_string_pretty(&refs)?)
+}
+
+async fn tool_lookup_bip(store: &impl KnowledgeStore, args: &serde_json::Value) -> Result<String> {
+	let number = args
+		.get("number")
+		.and_then(|v| v.as_u64())
+		.ok_or_else(|| anyhow::anyhow!("missing required parameter: number"))? as u32;
+
+	match store.lookup_bip(number).await? {
+		Some(ctx) => Ok(serde_json::to_string_pretty(&ctx)?),
+		None => Ok(format!("BIP-{} not found", number)),
+	}
+}
+
+async fn tool_lookup_bolt(store: &impl KnowledgeStore, args: &serde_json::Value) -> Result<String> {
+	let number = args
+		.get("number")
+		.and_then(|v| v.as_u64())
+		.ok_or_else(|| anyhow::anyhow!("missing required parameter: number"))? as u32;
+
+	match store.lookup_bolt(number).await? {
+		Some(ctx) => Ok(serde_json::to_string_pretty(&ctx)?),
+		None => Ok(format!("BOLT-{} not found", number)),
+	}
+}
+
 fn tool_definitions() -> serde_json::Value {
 	serde_json::json!([
 		{
@@ -252,6 +293,56 @@ fn tool_definitions() -> serde_json::Value {
 					}
 				},
 				"required": ["id"]
+			}
+		},
+		{
+			"name": "bkb_get_references",
+			"description": "Find all documents referencing a given entity (BIP, BOLT, issue, commit, or concept).",
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"entity": {
+						"type": "string",
+						"description": "Entity to look up (e.g. 'BIP-340', 'bitcoin/bitcoin#12345', commit SHA, or concept slug)"
+					},
+					"ref_type": {
+						"type": "string",
+						"description": "Filter by reference type (e.g. 'references_bip', 'fixes')"
+					},
+					"limit": {
+						"type": "integer",
+						"description": "Max results (default 50)"
+					}
+				},
+				"required": ["entity"]
+			}
+		},
+		{
+			"name": "bkb_lookup_bip",
+			"description": "Get comprehensive context for a BIP: spec text, all referencing discussions, PRs, and Optech summary.",
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"number": {
+						"type": "integer",
+						"description": "BIP number (e.g. 340)"
+					}
+				},
+				"required": ["number"]
+			}
+		},
+		{
+			"name": "bkb_lookup_bolt",
+			"description": "Get comprehensive context for a BOLT: spec text, all referencing discussions, PRs, and Optech summary.",
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"number": {
+						"type": "integer",
+						"description": "BOLT number (e.g. 11)"
+					}
+				},
+				"required": ["number"]
 			}
 		}
 	])

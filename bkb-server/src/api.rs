@@ -22,6 +22,9 @@ pub async fn serve(store: AppState, addr: SocketAddr) -> Result<()> {
 	let app = Router::new()
 		.route("/search", get(search))
 		.route("/document/{id}", get(get_document))
+		.route("/references/{entity}", get(get_references))
+		.route("/bip/{number}", get(get_bip))
+		.route("/bolt/{number}", get(get_bolt))
 		.route("/health", get(health))
 		.layer(CorsLayer::permissive())
 		.layer(TraceLayer::new_for_http())
@@ -97,6 +100,44 @@ async fn get_document(State(store): State<AppState>, Path(id): Path<String>) -> 
 		Ok(None) => {
 			(StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "document not found" })))
 		},
+		Err(e) => {
+			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
+		},
+	}
+}
+
+#[derive(Debug, Deserialize)]
+struct ReferencesQuery {
+	ref_type: Option<String>,
+	limit: Option<u32>,
+}
+
+async fn get_references(
+	State(store): State<AppState>, Path(entity): Path<String>, Query(query): Query<ReferencesQuery>,
+) -> impl IntoResponse {
+	let limit = query.limit.unwrap_or(50).min(100);
+	match store.get_references(&entity, query.ref_type.as_deref(), limit).await {
+		Ok(refs) => (StatusCode::OK, Json(serde_json::to_value(refs).unwrap())),
+		Err(e) => {
+			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
+		},
+	}
+}
+
+async fn get_bip(State(store): State<AppState>, Path(number): Path<u32>) -> impl IntoResponse {
+	match store.lookup_bip(number).await {
+		Ok(Some(ctx)) => (StatusCode::OK, Json(serde_json::to_value(ctx).unwrap())),
+		Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "BIP not found" }))),
+		Err(e) => {
+			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
+		},
+	}
+}
+
+async fn get_bolt(State(store): State<AppState>, Path(number): Path<u32>) -> impl IntoResponse {
+	match store.lookup_bolt(number).await {
+		Ok(Some(ctx)) => (StatusCode::OK, Json(serde_json::to_value(ctx).unwrap())),
+		Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "BOLT not found" }))),
 		Err(e) => {
 			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
 		},
