@@ -1,0 +1,21 @@
+[package]
+name = "bkb-ingest"
+description = "Ingestion pipeline, job queue, and source adapters for the Bitcoin Knowledge Base"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bkb-core = { workspace = true }
+bkb-store = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+regex = { workspace = true }
+async-trait = "0.1"
+url = "2"

@@ -1,0 +1,21 @@
+[package]
+name = "bkb-mcp"
+description = "MCP server for AI agent access to the Bitcoin Knowledge Base"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bkb-core = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+async-trait = "0.1"
+url = "2"

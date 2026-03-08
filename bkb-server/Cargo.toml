@@ -1,0 +1,22 @@
+[package]
+name = "bkb-server"
+description = "HTTP API server and ingestion scheduler for the Bitcoin Knowledge Base"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bkb-core = { workspace = true }
+bkb-ingest = { workspace = true }
+bkb-store = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
