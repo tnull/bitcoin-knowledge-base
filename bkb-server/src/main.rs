@@ -84,14 +84,6 @@ async fn main() -> Result<()> {
 	let cli = Cli::parse();
 	let config = Config::new(cli.dev_subset);
 
-	// Expand ~ in cache_dir
-	let cache_dir = expand_tilde(&cli.cache_dir);
-	let repo_cache = Arc::new(RepoCache::new(
-		cache_dir,
-		cli.max_cache_gb * 1024 * 1024 * 1024,
-		cli.max_repo_size_mb * 1024,
-	)?);
-
 	info!(db = %cli.db, bind = %cli.bind, dev_subset = cli.dev_subset, "starting BKB server");
 
 	let store = Arc::new(SqliteStore::open(std::path::Path::new(&cli.db))?);
@@ -99,6 +91,7 @@ async fn main() -> Result<()> {
 
 	// Single-source ingest mode
 	if let Some(ref source_spec) = cli.ingest_only {
+		let repo_cache = Arc::new(create_repo_cache(&cli)?);
 		return run_single_source(source_spec, &cli, &store, &repo_cache).await;
 	}
 
@@ -115,6 +108,7 @@ async fn main() -> Result<()> {
 
 	if !cli.no_ingest {
 		// Start ingestion scheduler
+		let repo_cache = Arc::new(create_repo_cache(&cli)?);
 		let rate_limiter = Arc::new(RateLimiter::new(200));
 		let queue = Arc::new(JobQueue::new(Arc::clone(&rate_limiter), Arc::clone(&store)));
 
@@ -414,6 +408,12 @@ async fn run_single_source(
 	}
 
 	Ok(())
+}
+
+/// Create a `RepoCache` from CLI arguments. Only called when ingestion is enabled.
+fn create_repo_cache(cli: &Cli) -> Result<RepoCache> {
+	let cache_dir = expand_tilde(&cli.cache_dir);
+	RepoCache::new(cache_dir, cli.max_cache_gb * 1024 * 1024 * 1024, cli.max_repo_size_mb * 1024)
 }
 
 /// Expand `~` at the start of a path to the user's home directory.
