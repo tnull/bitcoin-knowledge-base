@@ -435,7 +435,7 @@ impl KnowledgeStore for SqliteStore {
 				snippet(documents_fts, 1, '<mark>', '</mark>', '...', 64) as snippet,
 				d.author, d.created_at,
 				bm25(documents_fts, 5.0, 1.0) as score,
-				d.source_id, d.parent_id
+				d.source_id, d.parent_id, d.metadata
 			 FROM documents_fts
 			 JOIN documents d ON d.rowid = documents_fts.rowid
 			 WHERE documents_fts MATCH ?1",
@@ -511,6 +511,7 @@ impl KnowledgeStore for SqliteStore {
 				let source_repo: Option<String> = row.get(2)?;
 				let source_id: String = row.get(8)?;
 				let parent_id: Option<String> = row.get(9)?;
+				let metadata_str: Option<String> = row.get(10)?;
 				let doc = Document {
 					id: String::new(),
 					source_type: source_type.clone(),
@@ -523,7 +524,7 @@ impl KnowledgeStore for SqliteStore {
 					created_at: chrono::Utc::now(),
 					updated_at: None,
 					parent_id,
-					metadata: None,
+					metadata: metadata_str.and_then(|s| serde_json::from_str(&s).ok()),
 					seq: None,
 				};
 				Ok(SearchResult {
@@ -729,7 +730,7 @@ impl KnowledgeStore for SqliteStore {
 
 		let mut sql = String::from(
 			"SELECT d.id, d.source_type, d.title, d.created_at, d.source_repo, d.source_id,
-				d.parent_id
+				d.parent_id, d.metadata
 			 FROM concept_mentions cm
 			 JOIN documents d ON d.id = cm.doc_id
 			 WHERE cm.concept_slug = ?1",
@@ -767,6 +768,7 @@ impl KnowledgeStore for SqliteStore {
 				let source_repo: Option<String> = row.get(4)?;
 				let source_id: String = row.get(5)?;
 				let parent_id: Option<String> = row.get(6)?;
+				let metadata_str: Option<String> = row.get(7)?;
 				let doc = Document {
 					id: String::new(),
 					source_type: source_type.clone(),
@@ -779,7 +781,7 @@ impl KnowledgeStore for SqliteStore {
 					created_at: chrono::Utc::now(),
 					updated_at: None,
 					parent_id,
-					metadata: None,
+					metadata: metadata_str.and_then(|s| serde_json::from_str(&s).ok()),
 					seq: None,
 				};
 				let date = created_at_str.get(..10).unwrap_or(&created_at_str).to_string();

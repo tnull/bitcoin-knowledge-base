@@ -164,7 +164,14 @@ impl Document {
 				Some(format!("https://delvingbitcoin.org/p/{}", self.source_id))
 			},
 			SourceType::OptechNewsletter => {
-				Some(format!("https://bitcoinops.org/en/newsletters/{}/", self.source_id))
+				// The slug (date-based filename) is stored in metadata; source_id is
+				// the newsletter number which doesn't appear in the URL.
+				let slug =
+					self.metadata.as_ref().and_then(|m| m.get("slug")).and_then(|s| s.as_str());
+				match slug {
+					Some(s) => Some(format!("https://bitcoinops.org/en/newsletters/{}/", s)),
+					None => None,
+				}
 			},
 			SourceType::OptechTopic => {
 				Some(format!("https://bitcoinops.org/en/topics/{}/", self.source_id))
@@ -402,6 +409,22 @@ mod tests {
 			doc.url().unwrap(),
 			"https://github.com/bitcoin/bips/blob/master/bip-340.mediawiki"
 		);
+	}
+
+	#[test]
+	fn test_optech_newsletter_url_with_slug() {
+		let mut doc = make_doc(SourceType::OptechNewsletter, None, "151");
+		doc.metadata = Some(serde_json::json!({ "slug": "2024-01-10-newsletter" }));
+		assert_eq!(
+			doc.url().unwrap(),
+			"https://bitcoinops.org/en/newsletters/2024-01-10-newsletter/"
+		);
+	}
+
+	#[test]
+	fn test_optech_newsletter_url_without_slug() {
+		let doc = make_doc(SourceType::OptechNewsletter, None, "151");
+		assert!(doc.url().is_none());
 	}
 
 	#[test]
