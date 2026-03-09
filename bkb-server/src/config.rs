@@ -81,6 +81,12 @@ impl Config {
 				("payjoin".to_string(), "tx-indexer".to_string()),
 				("payjoin".to_string(), "receive-payjoin-v2".to_string()),
 				("payjoin".to_string(), "batch-plot".to_string()),
+				// LND
+				("lightningnetwork".to_string(), "lnd".to_string()),
+				// Core Lightning
+				("ElementsProject".to_string(), "lightning".to_string()),
+				// Eclair
+				("ACINQ".to_string(), "eclair".to_string()),
 				// Specs
 				("bitcoin".to_string(), "bips".to_string()),
 				("lightning".to_string(), "bolts".to_string()),
