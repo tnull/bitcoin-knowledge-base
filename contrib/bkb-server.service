@@ -12,6 +12,7 @@ ExecStart=/opt/bkb/bkb-server \
     --db /opt/bkb/data/bkb.db \
     --bind 127.0.0.1:3000 \
     --cache-dir /opt/bkb/cache/repos
+Environment=HOME=/opt/bkb
 Environment=GITHUB_TOKEN=
 Environment=BKB_ADMIN_PASSWORD=
 Environment=RUST_LOG=info,bkb_server=debug,bkb_ingest=debug,bkb_store=debug
