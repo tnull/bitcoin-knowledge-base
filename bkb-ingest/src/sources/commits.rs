@@ -235,6 +235,9 @@ fn resolve_default_branch(repo: &git2::Repository) -> Result<git2::Oid> {
 
 /// Build a `Document` from a git commit, including changeset summary and
 /// truncated diff.
+///
+/// For merge commits, the diff is skipped entirely (merge diffs are huge
+/// and rarely useful) -- only the commit message and parent SHAs are recorded.
 fn build_commit_document(
 	repo: &git2::Repository, commit: &git2::Commit, sha: &str, source_repo: &str,
 ) -> Result<Document> {
@@ -248,32 +251,38 @@ fn build_commit_document(
 	let author_time = author_sig.when();
 	let created_at = git_time_to_chrono(&author_time);
 
-	// Build changeset
-	let changeset = build_changeset(repo, commit);
-
-	// Build full body: commit message + changeset
-	let body = if changeset.is_empty() {
-		message.clone()
-	} else {
-		format!("{}\n\n---\nChangeset:\n{}", message, changeset)
-	};
-
-	// Build metadata
 	let parents: Vec<String> = commit.parent_ids().map(|oid| oid.to_string()).collect();
 	let is_merge = parents.len() > 1;
 
-	let (file_stats, files_changed, insertions, deletions) = compute_diff_stats(repo, commit);
+	// Compute diff once (skip entirely for merge commits)
+	let diff_info = if is_merge { None } else { compute_diff(repo, commit) };
 
-	let files_meta: Vec<serde_json::Value> = file_stats
-		.iter()
-		.take(MAX_FILES_IN_METADATA)
-		.map(|f| {
-			serde_json::json!({
-				"path": f.path,
-				"status": f.status,
-			})
-		})
-		.collect();
+	// Build body: commit message + changeset (non-merge only)
+	let body = match diff_info {
+		Some(ref info) if !info.changeset_text.is_empty() => {
+			format!("{}\n\n---\nChangeset:\n{}", message, info.changeset_text)
+		},
+		_ => message.clone(),
+	};
+
+	// Build metadata
+	let (files_meta, files_changed, insertions, deletions) = match diff_info {
+		Some(ref info) => {
+			let meta: Vec<serde_json::Value> = info
+				.file_stats
+				.iter()
+				.take(MAX_FILES_IN_METADATA)
+				.map(|f| {
+					serde_json::json!({
+						"path": f.path,
+						"status": f.status,
+					})
+				})
+				.collect();
+			(meta, info.files_changed, info.insertions, info.deletions)
+		},
+		None => (Vec::new(), 0, 0, 0),
+	};
 
 	let metadata = serde_json::json!({
 		"is_merge": is_merge,
@@ -303,20 +312,50 @@ fn build_commit_document(
 	})
 }
 
-/// Build the changeset summary: file list with stats + truncated unified diff.
-fn build_changeset(repo: &git2::Repository, commit: &git2::Commit) -> String {
-	let diff = match commit_diff(repo, commit) {
-		Some(d) => d,
-		None => return String::new(),
+/// All diff-derived information for a commit, computed in a single pass.
+struct DiffInfo {
+	changeset_text: String,
+	file_stats: Vec<FileStat>,
+	files_changed: usize,
+	insertions: usize,
+	deletions: usize,
+}
+
+/// File-level diff stat info.
+struct FileStat {
+	path: String,
+	status: String,
+}
+
+/// Compute the diff for a commit against its first parent (or empty tree for
+/// root commits). Returns `None` if the diff cannot be computed.
+///
+/// Extracts changeset text (file list + truncated unified diff), file stats,
+/// and aggregate insertion/deletion counts -- all from a single diff.
+fn compute_diff(repo: &git2::Repository, commit: &git2::Commit) -> Option<DiffInfo> {
+	let tree = commit.tree().ok()?;
+
+	let parent_tree = if commit.parent_count() > 0 {
+		commit.parent(0).ok().and_then(|p| p.tree().ok())
+	} else {
+		None
 	};
 
-	let stats = diff.stats().ok();
+	let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None).ok()?;
 
-	let mut output = String::new();
+	// Aggregate stats
+	let stats = diff.stats().ok();
+	let files_changed = stats.as_ref().map(|s| s.files_changed()).unwrap_or(0);
+	let insertions = stats.as_ref().map(|s| s.insertions()).unwrap_or(0);
+	let deletions = stats.as_ref().map(|s| s.deletions()).unwrap_or(0);
+
+	// File stats + changeset text (file list portion)
+	let mut changeset_text = String::new();
+	let mut file_stats = Vec::new();
 
 	// Summary line
 	if let Some(ref stats) = stats {
-		output.push_str(&format!(
+		changeset_text.push_str(&format!(
 			"{} file(s) changed, {} insertion(s)(+), {} deletion(s)(-)\n",
 			stats.files_changed(),
 			stats.insertions(),
@@ -327,19 +366,14 @@ fn build_changeset(repo: &git2::Repository, commit: &git2::Commit) -> String {
 	// File list with status
 	let num_deltas = diff.deltas().len();
 	for (i, delta) in diff.deltas().enumerate() {
-		if i >= MAX_FILES_IN_METADATA {
-			output.push_str(&format!("... and {} more files\n", num_deltas - i));
-			break;
-		}
-
-		let status_char = match delta.status() {
-			git2::Delta::Added => 'A',
-			git2::Delta::Deleted => 'D',
-			git2::Delta::Modified => 'M',
-			git2::Delta::Renamed => 'R',
-			git2::Delta::Copied => 'C',
-			git2::Delta::Typechange => 'T',
-			_ => '?',
+		let (status_char, status_str) = match delta.status() {
+			git2::Delta::Added => ('A', "added"),
+			git2::Delta::Deleted => ('D', "deleted"),
+			git2::Delta::Modified => ('M', "modified"),
+			git2::Delta::Renamed => ('R', "renamed"),
+			git2::Delta::Copied => ('C', "copied"),
+			git2::Delta::Typechange => ('T', "typechange"),
+			_ => ('?', "unknown"),
 		};
 
 		let path = delta
@@ -349,11 +383,16 @@ fn build_changeset(repo: &git2::Repository, commit: &git2::Commit) -> String {
 			.map(|p| p.to_string_lossy().to_string())
 			.unwrap_or_else(|| "<unknown>".to_string());
 
-		output.push_str(&format!("{} {}\n", status_char, path));
+		if i < MAX_FILES_IN_METADATA {
+			changeset_text.push_str(&format!("{} {}\n", status_char, path));
+			file_stats.push(FileStat { path, status: status_str.to_string() });
+		} else if i == MAX_FILES_IN_METADATA {
+			changeset_text.push_str(&format!("... and {} more files\n", num_deltas - i));
+		}
 	}
 
 	// Truncated unified diff
-	output.push('\n');
+	changeset_text.push('\n');
 
 	let mut diff_bytes = 0usize;
 	let mut truncated = false;
@@ -381,76 +420,16 @@ fn build_changeset(repo: &git2::Repository, commit: &git2::Commit) -> String {
 			return false;
 		}
 
-		output.push_str(&line_str);
+		changeset_text.push_str(&line_str);
 		true
 	})
 	.ok();
 
 	if truncated {
-		output.push_str(&format!("\n[truncated at {} bytes]\n", MAX_DIFF_BYTES));
+		changeset_text.push_str(&format!("\n[truncated at {} bytes]\n", MAX_DIFF_BYTES));
 	}
 
-	output
-}
-
-/// Compute the diff for a commit against its first parent (or empty tree for root).
-fn commit_diff<'a>(repo: &'a git2::Repository, commit: &git2::Commit) -> Option<git2::Diff<'a>> {
-	let tree = commit.tree().ok()?;
-
-	let parent_tree = if commit.parent_count() > 0 {
-		commit.parent(0).ok().and_then(|p| p.tree().ok())
-	} else {
-		None
-	};
-
-	repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None).ok()
-}
-
-/// File-level diff stat info.
-struct FileStat {
-	path: String,
-	status: String,
-}
-
-/// Compute diff stats (file list, insertions, deletions).
-fn compute_diff_stats(
-	repo: &git2::Repository, commit: &git2::Commit,
-) -> (Vec<FileStat>, usize, usize, usize) {
-	let diff = match commit_diff(repo, commit) {
-		Some(d) => d,
-		None => return (Vec::new(), 0, 0, 0),
-	};
-
-	let stats = diff.stats().ok();
-	let files_changed = stats.as_ref().map(|s| s.files_changed()).unwrap_or(0);
-	let insertions = stats.as_ref().map(|s| s.insertions()).unwrap_or(0);
-	let deletions = stats.as_ref().map(|s| s.deletions()).unwrap_or(0);
-
-	let file_stats: Vec<FileStat> = diff
-		.deltas()
-		.take(MAX_FILES_IN_METADATA)
-		.map(|delta| {
-			let status = match delta.status() {
-				git2::Delta::Added => "added",
-				git2::Delta::Deleted => "deleted",
-				git2::Delta::Modified => "modified",
-				git2::Delta::Renamed => "renamed",
-				git2::Delta::Copied => "copied",
-				_ => "unknown",
-			};
-
-			let path = delta
-				.new_file()
-				.path()
-				.or_else(|| delta.old_file().path())
-				.map(|p| p.to_string_lossy().to_string())
-				.unwrap_or_else(|| "<unknown>".to_string());
-
-			FileStat { path, status: status.to_string() }
-		})
-		.collect();
-
-	(file_stats, files_changed, insertions, deletions)
+	Some(DiffInfo { changeset_text, file_stats, files_changed, insertions, deletions })
 }
 
 /// Convert a `git2::Time` to `chrono::DateTime<Utc>`.
