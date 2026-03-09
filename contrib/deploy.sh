@@ -3,7 +3,7 @@ set -euo pipefail
 
 # === Configuration ===
 VPS_HOST="root@bitcoinknowledge.dev"
-GITHUB_TOKEN=""                        # fill in your token
+GITHUB_TOKEN="${GITHUB_TOKEN:?Set GITHUB_TOKEN env var}"
 BINARY="target/release/bkb-server"
 
 # === Build ===
