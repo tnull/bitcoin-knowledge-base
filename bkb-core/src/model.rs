@@ -164,14 +164,21 @@ impl Document {
 				Some(format!("https://delvingbitcoin.org/p/{}", self.source_id))
 			},
 			SourceType::OptechNewsletter => {
-				// The slug (date-based filename) is stored in metadata; source_id is
-				// the newsletter number which doesn't appear in the URL.
+				// The slug (e.g. "2023-03-01-newsletter") is stored in metadata.
+				// The URL format is /newsletters/YYYY/MM/DD/.
 				let slug =
 					self.metadata.as_ref().and_then(|m| m.get("slug")).and_then(|s| s.as_str());
-				match slug {
-					Some(s) => Some(format!("https://bitcoinops.org/en/newsletters/{}/", s)),
-					None => None,
-				}
+				slug.and_then(|s| {
+					let parts: Vec<&str> = s.splitn(4, '-').collect();
+					if parts.len() >= 3 {
+						Some(format!(
+							"https://bitcoinops.org/en/newsletters/{}/{}/{}/",
+							parts[0], parts[1], parts[2]
+						))
+					} else {
+						None
+					}
+				})
 			},
 			SourceType::OptechTopic => {
 				Some(format!("https://bitcoinops.org/en/topics/{}/", self.source_id))
@@ -413,12 +420,9 @@ mod tests {
 
 	#[test]
 	fn test_optech_newsletter_url_with_slug() {
-		let mut doc = make_doc(SourceType::OptechNewsletter, None, "151");
-		doc.metadata = Some(serde_json::json!({ "slug": "2024-01-10-newsletter" }));
-		assert_eq!(
-			doc.url().unwrap(),
-			"https://bitcoinops.org/en/newsletters/2024-01-10-newsletter/"
-		);
+		let mut doc = make_doc(SourceType::OptechNewsletter, None, "240");
+		doc.metadata = Some(serde_json::json!({ "slug": "2023-03-01-newsletter" }));
+		assert_eq!(doc.url().unwrap(), "https://bitcoinops.org/en/newsletters/2023/03/01/");
 	}
 
 	#[test]
