@@ -75,15 +75,10 @@ impl SyncSource for GitCommitSyncSource {
 					);
 				},
 				Err(e) => {
-					warn!(
-						repo = %format!("{}/{}", self.owner, self.repo),
-						error = %e, "repo exceeds size limit, skipping"
-					);
-					return Ok(SyncPage {
-						documents: Vec::new(),
-						references: Vec::new(),
-						next_cursor: None,
-					});
+					// Reset so the check is retried on the next run
+					self.size_checked.store(false, Ordering::Relaxed);
+					// Propagate as an error so the job queue applies backoff
+					anyhow::bail!("repo size check failed for {}/{}: {}", self.owner, self.repo, e);
 				},
 			}
 		}
