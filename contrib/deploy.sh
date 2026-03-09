@@ -2,8 +2,7 @@
 set -euo pipefail
 
 # === Configuration ===
-VPS_HOST="root@bitcoinknowledge.dev"   # or root@<IP> before DNS is set
-VPS_SSH_KEY="~/.ssh/id_ed25519"        # adjust to your key
+VPS_HOST="root@bitcoinknowledge.dev"
 GITHUB_TOKEN=""                        # fill in your token
 BINARY="target/release/bkb-server"
 
@@ -20,10 +19,10 @@ echo "==> Binary size: $(du -h "$BINARY" | cut -f1)"
 
 # === Deploy ===
 echo "==> Uploading binary..."
-scp -i "$VPS_SSH_KEY" "$BINARY" "${VPS_HOST}:/opt/bkb/bkb-server.new"
+scp "$BINARY" "${VPS_HOST}:/opt/bkb/bkb-server.new"
 
 echo "==> Setting up VPS..."
-ssh -i "$VPS_SSH_KEY" "$VPS_HOST" bash -s "$GITHUB_TOKEN" <<'REMOTE'
+ssh "$VPS_HOST" bash -s "$GITHUB_TOKEN" <<'REMOTE'
 set -euo pipefail
 GITHUB_TOKEN="$1"
 
