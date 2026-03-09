@@ -34,19 +34,13 @@ impl MailingListSyncSource {
 
 	/// Build the Atom feed URL for a given cursor.
 	///
-	/// If no cursor is given, fetches all messages from the beginning of the archive.
-	/// If a cursor (date) is given, fetches messages after that date.
+	/// The cursor is a date string (`YYYY-MM-DD`). On initial sync (no cursor),
+	/// we start from an early date so we paginate forward chronologically through
+	/// the entire archive. The bitcoin-dev mailing list archive goes back to
+	/// around 2011, so `2009-01-01` is a safe starting point.
 	fn feed_url(cursor: Option<&str>) -> String {
-		match cursor {
-			Some(date) => {
-				// Use date-sorted query for incremental sync: messages after the cursor date.
-				format!("{}/?q=d:{}..&x=A", BITCOINDEV_BASE_URL, date)
-			},
-			None => {
-				// Initial sync: fetch from the very beginning using a wide date range.
-				format!("{}/?q=d:..&x=A", BITCOINDEV_BASE_URL)
-			},
-		}
+		let start_date = cursor.unwrap_or("2009-01-01");
+		format!("{}/?q=d:{}..&x=A", BITCOINDEV_BASE_URL, start_date)
 	}
 
 	/// Build the raw message URL for a given message link.
@@ -129,23 +123,12 @@ impl SyncSource for MailingListSyncSource {
 		let mut documents = Vec::new();
 		let mut latest_date: Option<NaiveDate> = None;
 
-		// Parse the cursor date so we can skip entries at or before it.
-		let cursor_date = cursor.and_then(|c| NaiveDate::parse_from_str(c, "%Y-%m-%d").ok());
-
 		for entry in entries.iter().take(MAX_ENTRIES_PER_PAGE) {
 			// Extract the message ID from the link URL.
 			let message_id = extract_message_id(&entry.link);
 			if message_id.is_empty() {
 				warn!(link = %entry.link, "could not extract message ID from link, skipping");
 				continue;
-			}
-
-			// Parse the entry date and skip entries at or before cursor.
-			let entry_date = entry.updated_date();
-			if let (Some(cd), Some(ed)) = (cursor_date, entry_date) {
-				if ed <= cd {
-					continue;
-				}
 			}
 
 			// Fetch raw message.
@@ -201,7 +184,27 @@ impl SyncSource for MailingListSyncSource {
 			documents.push(document);
 		}
 
-		let next_cursor = latest_date.map(|d| d.format("%Y-%m-%d").to_string());
+		// Determine the next cursor. If we processed a full page, there are
+		// likely more entries to fetch, so signal continuation. If the latest
+		// date we saw hasn't advanced beyond the current cursor, bump it by
+		// one day to avoid re-fetching the same page indefinitely.
+		let cursor_date = cursor.and_then(|c| NaiveDate::parse_from_str(c, "%Y-%m-%d").ok());
+		let next_cursor = if entries.len() >= MAX_ENTRIES_PER_PAGE {
+			// Full page -- there's probably more to fetch.
+			let next_date = match (latest_date, cursor_date) {
+				(Some(ld), Some(cd)) if ld <= cd => {
+					// No progress -- skip ahead one day.
+					cd + chrono::Duration::days(1)
+				},
+				(Some(ld), _) => ld,
+				(None, Some(cd)) => cd + chrono::Duration::days(1),
+				(None, None) => chrono::Utc::now().date_naive(),
+			};
+			Some(next_date.format("%Y-%m-%d").to_string())
+		} else {
+			// Partial page -- we've caught up.
+			latest_date.map(|d| d.format("%Y-%m-%d").to_string())
+		};
 
 		info!(
 			source = "mailing_list",
@@ -229,17 +232,6 @@ struct AtomEntry {
 	link: String,
 	/// The `<updated>` timestamp as a string.
 	updated: String,
-}
-
-impl AtomEntry {
-	/// Parse the updated timestamp to a `NaiveDate`, if possible.
-	fn updated_date(&self) -> Option<NaiveDate> {
-		// Try RFC 3339 first, then plain date.
-		DateTime::parse_from_rfc3339(&self.updated)
-			.ok()
-			.map(|dt| dt.date_naive())
-			.or_else(|| NaiveDate::parse_from_str(&self.updated, "%Y-%m-%d").ok())
-	}
 }
 
 /// Parse Atom XML entries using simple string-based parsing.
@@ -457,7 +449,7 @@ mod tests {
 	#[test]
 	fn test_feed_url_no_cursor() {
 		let url = MailingListSyncSource::feed_url(None);
-		assert_eq!(url, "https://gnusha.org/pi/bitcoindev/?q=d:..&x=A");
+		assert_eq!(url, "https://gnusha.org/pi/bitcoindev/?q=d:2009-01-01..&x=A");
 	}
 
 	#[test]
