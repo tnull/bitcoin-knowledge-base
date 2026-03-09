@@ -11,6 +11,7 @@ use tracing::{error, info, warn};
 use bkb_store::sqlite::SqliteStore;
 
 use crate::enrichment;
+use crate::metrics::Metrics;
 use crate::rate_limiter::RateLimiter;
 use crate::sources::SyncSource;
 
@@ -62,11 +63,14 @@ pub struct JobQueue {
 	jobs: Mutex<BinaryHeap<SyncJob>>,
 	rate_limiter: Arc<RateLimiter>,
 	store: Arc<SqliteStore>,
+	metrics: Option<Arc<Metrics>>,
 }
 
 impl JobQueue {
-	pub fn new(rate_limiter: Arc<RateLimiter>, store: Arc<SqliteStore>) -> Self {
-		Self { jobs: Mutex::new(BinaryHeap::new()), rate_limiter, store }
+	pub fn new(
+		rate_limiter: Arc<RateLimiter>, store: Arc<SqliteStore>, metrics: Option<Arc<Metrics>>,
+	) -> Self {
+		Self { jobs: Mutex::new(BinaryHeap::new()), rate_limiter, store, metrics }
 	}
 
 	/// Add a sync job to the queue.
@@ -105,6 +109,8 @@ impl JobQueue {
 	async fn execute_job(&self, mut job: SyncJob) {
 		let source_name = job.source.name().to_string();
 		info!(source = %source_name, cursor = ?job.cursor, "executing sync job");
+
+		let started = std::time::Instant::now();
 
 		match job.source.fetch_page(job.cursor.as_deref(), &self.rate_limiter).await {
 			Ok(page) => {
@@ -153,6 +159,17 @@ impl JobQueue {
 
 				info!(source = %source_name, documents = doc_count, "page processed");
 
+				// Record metrics
+				if let Some(ref metrics) = self.metrics {
+					metrics.record_job_run(
+						&job.source_id,
+						started.elapsed(),
+						doc_count as u32,
+						job.base_interval,
+						None,
+					);
+				}
+
 				// Determine next run
 				if let Some(next_cursor) = page.next_cursor {
 					// More pages to fetch -- run immediately
@@ -174,6 +191,17 @@ impl JobQueue {
 				}
 			},
 			Err(e) => {
+				// Record metrics for failed run
+				if let Some(ref metrics) = self.metrics {
+					metrics.record_job_run(
+						&job.source_id,
+						started.elapsed(),
+						0,
+						job.base_interval,
+						Some(e.to_string()),
+					);
+				}
+
 				error!(source = %source_name, error = %e, "sync job failed");
 
 				// Exponential backoff on failure

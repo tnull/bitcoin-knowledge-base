@@ -314,7 +314,7 @@ impl RepoCache {
 }
 
 /// Recursively compute the size of a directory in bytes.
-fn dir_size(path: &Path) -> u64 {
+pub fn dir_size(path: &Path) -> u64 {
 	let mut total = 0u64;
 	if let Ok(entries) = std::fs::read_dir(path) {
 		for entry in entries.flatten() {

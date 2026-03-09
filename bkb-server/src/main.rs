@@ -1,5 +1,6 @@
 mod api;
 mod config;
+mod dashboard;
 mod landing;
 
 use std::path::PathBuf;
@@ -10,6 +11,7 @@ use clap::Parser;
 use tokio::time::Instant;
 use tracing::info;
 
+use bkb_ingest::metrics::Metrics;
 use bkb_ingest::queue::{JobQueue, Priority, SyncJob};
 use bkb_ingest::rate_limiter::RateLimiter;
 use bkb_ingest::repo_cache::RepoCache;
@@ -69,6 +71,11 @@ struct Cli {
 	/// Maximum single repo size in MB (skip larger repos).
 	#[arg(long, default_value = "4096")]
 	max_repo_size_mb: u64,
+
+	/// Password for /metrics and /admin/dashboard endpoints (HTTP Basic Auth).
+	/// If unset, these routes are not registered.
+	#[arg(long, env = "BKB_ADMIN_PASSWORD")]
+	admin_password: Option<String>,
 }
 
 #[tokio::main]
@@ -95,11 +102,34 @@ async fn main() -> Result<()> {
 		return run_single_source(source_spec, &cli, &store, &repo_cache).await;
 	}
 
-	// Start HTTP API server
-	let api_store = Arc::clone(&store);
 	let bind_addr: std::net::SocketAddr = cli.bind.parse()?;
+
+	// Build metrics and app state based on whether ingestion is enabled
+	let (metrics, cache_dir_for_metrics) = if !cli.no_ingest {
+		let cache_dir = expand_tilde(&cli.cache_dir);
+		let max_cache_bytes = cli.max_cache_gb * 1024 * 1024 * 1024;
+		(
+			Some(Arc::new(Metrics::new(
+				PathBuf::from(&cli.db),
+				Some(cache_dir),
+				Some(max_cache_bytes),
+			))),
+			true,
+		)
+	} else {
+		(Some(Arc::new(Metrics::new(PathBuf::from(&cli.db), None, None))), false)
+	};
+	let _ = cache_dir_for_metrics;
+
+	let app_state = api::AppState {
+		store: Arc::clone(&store),
+		metrics: metrics.clone(),
+		admin_password: cli.admin_password.clone(),
+	};
+
+	// Start HTTP API server
 	let api_handle = tokio::spawn(async move {
-		if let Err(e) = api::serve(api_store, bind_addr).await {
+		if let Err(e) = api::serve(app_state, bind_addr).await {
 			tracing::error!(error = %e, "API server failed");
 		}
 	});
@@ -110,7 +140,7 @@ async fn main() -> Result<()> {
 		// Start ingestion scheduler
 		let repo_cache = Arc::new(create_repo_cache(&cli)?);
 		let rate_limiter = Arc::new(RateLimiter::new(200));
-		let queue = Arc::new(JobQueue::new(Arc::clone(&rate_limiter), Arc::clone(&store)));
+		let queue = Arc::new(JobQueue::new(Arc::clone(&rate_limiter), Arc::clone(&store), metrics));
 
 		// Register sync sources from config
 		let repos = config.github_repos();
