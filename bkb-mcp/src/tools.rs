@@ -114,6 +114,8 @@ async fn handle_tool_call(
 		"bkb_get_references" => tool_get_references(store, &arguments).await,
 		"bkb_lookup_bip" => tool_lookup_bip(store, &arguments).await,
 		"bkb_lookup_bolt" => tool_lookup_bolt(store, &arguments).await,
+		"bkb_timeline" => tool_timeline(store, &arguments).await,
+		"bkb_find_commit" => tool_find_commit(store, &arguments).await,
 		_ => Err(anyhow::anyhow!("unknown tool: {}", tool_name)),
 	};
 
@@ -237,6 +239,39 @@ async fn tool_lookup_bolt(store: &impl KnowledgeStore, args: &serde_json::Value)
 	}
 }
 
+async fn tool_timeline(store: &impl KnowledgeStore, args: &serde_json::Value) -> Result<String> {
+	let concept = args
+		.get("concept")
+		.and_then(|v| v.as_str())
+		.ok_or_else(|| anyhow::anyhow!("missing required parameter: concept"))?;
+
+	let after = args
+		.get("after")
+		.and_then(|v| v.as_str())
+		.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+		.map(|dt| dt.with_timezone(&chrono::Utc));
+
+	let before = args
+		.get("before")
+		.and_then(|v| v.as_str())
+		.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+		.map(|dt| dt.with_timezone(&chrono::Utc));
+
+	let timeline = store.timeline(concept, after, before).await?;
+	Ok(serde_json::to_string_pretty(&timeline)?)
+}
+
+async fn tool_find_commit(store: &impl KnowledgeStore, args: &serde_json::Value) -> Result<String> {
+	let query = args
+		.get("query")
+		.and_then(|v| v.as_str())
+		.ok_or_else(|| anyhow::anyhow!("missing required parameter: query"))?;
+	let repo = args.get("repo").and_then(|v| v.as_str());
+
+	let results = store.find_commit(query, repo).await?;
+	Ok(serde_json::to_string_pretty(&results)?)
+}
+
 fn tool_definitions() -> serde_json::Value {
 	serde_json::json!([
 		{
@@ -343,6 +378,46 @@ fn tool_definitions() -> serde_json::Value {
 					}
 				},
 				"required": ["number"]
+			}
+		},
+		{
+			"name": "bkb_timeline",
+			"description": "Chronological timeline of a concept across all sources: mailing list proposals, BIPs, implementation PRs, Optech coverage.",
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"concept": {
+						"type": "string",
+						"description": "Concept slug or search term (e.g. 'taproot', 'package-relay')"
+					},
+					"after": {
+						"type": "string",
+						"description": "Start date (ISO 8601)"
+					},
+					"before": {
+						"type": "string",
+						"description": "End date (ISO 8601)"
+					}
+				},
+				"required": ["concept"]
+			}
+		},
+		{
+			"name": "bkb_find_commit",
+			"description": "Find which commit(s) introduced a change, with the associated PR and discussion context.",
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"query": {
+						"type": "string",
+						"description": "Description of change, function name, or code pattern"
+					},
+					"repo": {
+						"type": "string",
+						"description": "Limit to a specific repo (e.g. 'bitcoin/bitcoin')"
+					}
+				},
+				"required": ["query"]
 			}
 		}
 	])

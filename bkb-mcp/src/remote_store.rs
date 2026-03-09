@@ -2,7 +2,11 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 
-use bkb_core::model::{DocumentContext, Reference, SearchParams, SearchResults};
+use chrono::{DateTime, Utc};
+
+use bkb_core::model::{
+	CommitContext, DocumentContext, Reference, SearchParams, SearchResults, Timeline,
+};
 use bkb_core::store::KnowledgeStore;
 
 /// KnowledgeStore implementation that proxies to the BKB HTTP API.
@@ -136,6 +140,47 @@ impl KnowledgeStore for RemoteApiStore {
 		let ctx: DocumentContext =
 			response.json().await.context("failed to parse BOLT response")?;
 		Ok(Some(ctx))
+	}
+
+	async fn timeline(
+		&self, concept: &str, after: Option<DateTime<Utc>>, before: Option<DateTime<Utc>>,
+	) -> Result<Timeline> {
+		let mut url = format!("{}/timeline/{}", self.base_url, urlencoded(concept));
+
+		if let Some(ref after) = after {
+			url.push_str(&format!("?after={}", after.to_rfc3339()));
+		}
+
+		if let Some(ref before) = before {
+			let sep = if url.contains('?') { '&' } else { '?' };
+			url.push_str(&format!("{}before={}", sep, before.to_rfc3339()));
+		}
+
+		let response = self.client.get(&url).send().await.context("failed to query BKB API")?;
+
+		if !response.status().is_success() {
+			let body = response.text().await.unwrap_or_default();
+			anyhow::bail!("BKB API returned error: {}", body);
+		}
+
+		response.json().await.context("failed to parse timeline response")
+	}
+
+	async fn find_commit(&self, query: &str, repo: Option<&str>) -> Result<Vec<CommitContext>> {
+		let mut url = format!("{}/find_commit?q={}", self.base_url, urlencoded(query));
+
+		if let Some(repo) = repo {
+			url.push_str(&format!("&repo={}", urlencoded(repo)));
+		}
+
+		let response = self.client.get(&url).send().await.context("failed to query BKB API")?;
+
+		if !response.status().is_success() {
+			let body = response.text().await.unwrap_or_default();
+			anyhow::bail!("BKB API returned error: {}", body);
+		}
+
+		response.json().await.context("failed to parse find_commit response")
 	}
 }
 

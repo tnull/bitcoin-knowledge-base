@@ -39,7 +39,29 @@ impl SqliteStore {
 		conn.execute_batch("PRAGMA journal_mode=WAL;")?;
 		conn.execute_batch("PRAGMA foreign_keys=ON;")?;
 		conn.execute_batch(SCHEMA_SQL)?;
+		Self::seed_concepts(&conn)?;
 		Ok(Self { conn: Arc::new(Mutex::new(conn)) })
+	}
+
+	/// Seed the `concepts` table with all entries from the curated vocabulary.
+	///
+	/// Uses `INSERT OR IGNORE` so existing rows are not overwritten.
+	fn seed_concepts(conn: &Connection) -> Result<()> {
+		use bkb_core::bitcoin::CONCEPTS;
+		let mut stmt = conn.prepare(
+			"INSERT OR IGNORE INTO concepts (slug, name, category, aliases)
+			 VALUES (?1, ?2, ?3, ?4)",
+		)?;
+		for concept in CONCEPTS {
+			let aliases_json = serde_json::to_string(concept.aliases)?;
+			stmt.execute(rusqlite::params![
+				concept.slug,
+				concept.name,
+				concept.category,
+				&aliases_json,
+			])?;
+		}
+		Ok(())
 	}
 
 	/// Insert or update a document, appending to the change log.
@@ -125,6 +147,26 @@ impl SqliteStore {
 	pub async fn delete_refs_from(&self, doc_id: &str) -> Result<()> {
 		let conn = self.conn.lock().await;
 		conn.execute("DELETE FROM refs WHERE from_doc_id = ?1", [doc_id])?;
+		Ok(())
+	}
+
+	/// Insert or replace a concept mention for a document.
+	pub async fn upsert_concept_mention(
+		&self, doc_id: &str, concept_slug: &str, confidence: f32,
+	) -> Result<()> {
+		let conn = self.conn.lock().await;
+		conn.execute(
+			"INSERT OR REPLACE INTO concept_mentions (doc_id, concept_slug, confidence)
+			 VALUES (?1, ?2, ?3)",
+			rusqlite::params![doc_id, concept_slug, confidence],
+		)?;
+		Ok(())
+	}
+
+	/// Delete all concept mentions for a document (for re-enrichment).
+	pub async fn delete_concept_mentions(&self, doc_id: &str) -> Result<()> {
+		let conn = self.conn.lock().await;
+		conn.execute("DELETE FROM concept_mentions WHERE doc_id = ?1", [doc_id])?;
 		Ok(())
 	}
 
@@ -600,6 +642,115 @@ impl KnowledgeStore for SqliteStore {
 
 	async fn lookup_bolt(&self, number: u32) -> Result<Option<DocumentContext>> {
 		self.lookup_spec(SourceType::Bolt, number).await
+	}
+
+	async fn timeline(
+		&self, concept: &str, after: Option<chrono::DateTime<chrono::Utc>>,
+		before: Option<chrono::DateTime<chrono::Utc>>,
+	) -> Result<bkb_core::model::Timeline> {
+		let conn = self.conn.lock().await;
+
+		let mut sql = String::from(
+			"SELECT d.id, d.source_type, d.title, d.created_at, d.source_repo, d.source_id
+			 FROM concept_mentions cm
+			 JOIN documents d ON d.id = cm.doc_id
+			 WHERE cm.concept_slug = ?1",
+		);
+
+		let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
+			vec![Box::new(concept.to_string())];
+		let mut param_idx = 2;
+
+		if let Some(ref after) = after {
+			sql.push_str(&format!(" AND d.created_at >= ?{}", param_idx));
+			param_values.push(Box::new(after.to_rfc3339()));
+			param_idx += 1;
+		}
+
+		if let Some(ref before) = before {
+			sql.push_str(&format!(" AND d.created_at <= ?{}", param_idx));
+			param_values.push(Box::new(before.to_rfc3339()));
+			let _ = param_idx;
+		}
+
+		sql.push_str(" ORDER BY d.created_at ASC LIMIT 200");
+
+		let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+			param_values.iter().map(|b| b.as_ref()).collect();
+
+		let mut stmt = conn.prepare(&sql)?;
+
+		let events: Vec<bkb_core::model::TimelineEvent> = stmt
+			.query_map(param_refs.as_slice(), |row| {
+				let source_type_str: String = row.get(1)?;
+				let created_at_str: String = row.get(3)?;
+				let source_type =
+					SourceType::from_str(&source_type_str).unwrap_or(SourceType::GithubIssue);
+				let source_repo: Option<String> = row.get(4)?;
+				let source_id: String = row.get(5)?;
+				let doc = Document {
+					id: String::new(),
+					source_type: source_type.clone(),
+					source_repo: source_repo.clone(),
+					source_id,
+					title: None,
+					body: None,
+					author: None,
+					author_id: None,
+					created_at: chrono::Utc::now(),
+					updated_at: None,
+					parent_id: None,
+					metadata: None,
+					seq: None,
+				};
+				let date = created_at_str.get(..10).unwrap_or(&created_at_str).to_string();
+				Ok(bkb_core::model::TimelineEvent {
+					date,
+					source_type,
+					title: row.get(2)?,
+					id: row.get(0)?,
+					url: doc.url(),
+				})
+			})?
+			.collect::<rusqlite::Result<Vec<_>>>()?;
+
+		Ok(bkb_core::model::Timeline { concept: concept.to_string(), events })
+	}
+
+	async fn find_commit(
+		&self, query: &str, repo: Option<&str>,
+	) -> Result<Vec<bkb_core::model::CommitContext>> {
+		// find_commit is implemented as a specialized search with
+		// source_type=commit plus post-processing. Since we don't have
+		// the git commit adapter yet, we search all source types and
+		// return results with associated context.
+		let mut source_types = vec![SourceType::Commit];
+		// Also search PRs since they often describe the commit's purpose
+		source_types.push(SourceType::GithubPr);
+
+		let params = SearchParams {
+			query: query.to_string(),
+			source_type: Some(source_types),
+			source_repo: repo.map(|r| vec![r.to_string()]),
+			limit: Some(10),
+			..Default::default()
+		};
+
+		let results = self.search(params).await?;
+
+		let mut contexts = Vec::new();
+		for result in results.results {
+			let doc_ctx = self.get_document(&result.id).await?;
+			if let Some(ctx) = doc_ctx {
+				contexts.push(bkb_core::model::CommitContext {
+					url: ctx.url.clone(),
+					document: ctx.document,
+					associated_prs: Vec::new(),
+				});
+			}
+		}
+
+		Ok(contexts)
 	}
 }
 

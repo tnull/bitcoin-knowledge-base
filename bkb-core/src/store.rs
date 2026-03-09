@@ -1,7 +1,11 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::model::{DocumentContext, Reference, SearchParams, SearchResults};
+use chrono::{DateTime, Utc};
+
+use crate::model::{
+	CommitContext, DocumentContext, Reference, SearchParams, SearchResults, Timeline,
+};
 
 /// Trait for querying the Bitcoin Knowledge Base.
 ///
@@ -27,4 +31,12 @@ pub trait KnowledgeStore: Send + Sync {
 	/// Get comprehensive context for a BOLT: spec text, all referencing documents, and incoming
 	/// refs.
 	async fn lookup_bolt(&self, number: u32) -> Result<Option<DocumentContext>>;
+
+	/// Chronological timeline of a concept across all sources.
+	async fn timeline(
+		&self, concept: &str, after: Option<DateTime<Utc>>, before: Option<DateTime<Utc>>,
+	) -> Result<Timeline>;
+
+	/// Find commits matching a query, with associated PR and discussion context.
+	async fn find_commit(&self, query: &str, repo: Option<&str>) -> Result<Vec<CommitContext>>;
 }

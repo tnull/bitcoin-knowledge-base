@@ -260,6 +260,32 @@ pub struct DocumentContext {
 	pub concepts: Vec<String>,
 }
 
+/// A timeline event for a concept.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimelineEvent {
+	pub date: String,
+	#[serde(rename = "type")]
+	pub source_type: SourceType,
+	pub title: Option<String>,
+	pub id: String,
+	pub url: Option<String>,
+}
+
+/// Timeline of a concept across all sources.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Timeline {
+	pub concept: String,
+	pub events: Vec<TimelineEvent>,
+}
+
+/// Context for a commit search result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitContext {
+	pub document: Document,
+	pub url: Option<String>,
+	pub associated_prs: Vec<SearchResult>,
+}
+
 /// Sync state for a source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncState {

@@ -25,6 +25,8 @@ pub async fn serve(store: AppState, addr: SocketAddr) -> Result<()> {
 		.route("/references/{entity}", get(get_references))
 		.route("/bip/{number}", get(get_bip))
 		.route("/bolt/{number}", get(get_bolt))
+		.route("/timeline/{concept}", get(get_timeline))
+		.route("/find_commit", get(find_commit))
 		.route("/health", get(health))
 		.layer(CorsLayer::permissive())
 		.layer(TraceLayer::new_for_http())
@@ -138,6 +140,51 @@ async fn get_bolt(State(store): State<AppState>, Path(number): Path<u32>) -> imp
 	match store.lookup_bolt(number).await {
 		Ok(Some(ctx)) => (StatusCode::OK, Json(serde_json::to_value(ctx).unwrap())),
 		Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "BOLT not found" }))),
+		Err(e) => {
+			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
+		},
+	}
+}
+
+#[derive(Debug, Deserialize)]
+struct TimelineQuery {
+	after: Option<String>,
+	before: Option<String>,
+}
+
+async fn get_timeline(
+	State(store): State<AppState>, Path(concept): Path<String>, Query(query): Query<TimelineQuery>,
+) -> impl IntoResponse {
+	let after = query
+		.after
+		.as_ref()
+		.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+		.map(|dt| dt.with_timezone(&chrono::Utc));
+	let before = query
+		.before
+		.as_ref()
+		.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+		.map(|dt| dt.with_timezone(&chrono::Utc));
+
+	match store.timeline(&concept, after, before).await {
+		Ok(timeline) => (StatusCode::OK, Json(serde_json::to_value(timeline).unwrap())),
+		Err(e) => {
+			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
+		},
+	}
+}
+
+#[derive(Debug, Deserialize)]
+struct FindCommitQuery {
+	q: String,
+	repo: Option<String>,
+}
+
+async fn find_commit(
+	State(store): State<AppState>, Query(query): Query<FindCommitQuery>,
+) -> impl IntoResponse {
+	match store.find_commit(&query.q, query.repo.as_deref()).await {
+		Ok(results) => (StatusCode::OK, Json(serde_json::to_value(results).unwrap())),
 		Err(e) => {
 			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
 		},

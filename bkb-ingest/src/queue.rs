@@ -129,6 +129,18 @@ impl JobQueue {
 								warn!(doc_id = %doc.id, error = %e, "failed to insert reference");
 							}
 						}
+
+						// Store concept tags
+						if let Err(e) = self.store.delete_concept_mentions(&doc.id).await {
+							warn!(doc_id = %doc.id, error = %e, "failed to delete old concept mentions");
+						}
+						for (slug, confidence) in &output.concept_tags {
+							if let Err(e) =
+								self.store.upsert_concept_mention(&doc.id, slug, *confidence).await
+							{
+								warn!(doc_id = %doc.id, concept = %slug, error = %e, "failed to store concept mention");
+							}
+						}
 					}
 				}
 
