@@ -15,11 +15,14 @@ use bkb_core::model::{SearchParams, SourceType};
 use bkb_core::store::KnowledgeStore;
 use bkb_store::sqlite::SqliteStore;
 
+use crate::landing;
+
 type AppState = Arc<SqliteStore>;
 
 /// Start the HTTP API server.
 pub async fn serve(store: AppState, addr: SocketAddr) -> Result<()> {
 	let app = Router::new()
+		.route("/", get(landing::landing_page))
 		.route("/search", get(search))
 		.route("/document/{id}", get(get_document))
 		.route("/references/{entity}", get(get_references))

@@ -1,5 +1,6 @@
 mod api;
 mod config;
+mod landing;
 
 use std::sync::Arc;
 
