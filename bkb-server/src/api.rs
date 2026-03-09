@@ -23,6 +23,7 @@ type AppState = Arc<SqliteStore>;
 pub async fn serve(store: AppState, addr: SocketAddr) -> Result<()> {
 	let app = Router::new()
 		.route("/", get(landing::landing_page))
+		.route("/logo.png", get(landing::logo))
 		.route("/search", get(search))
 		.route("/document/{id}", get(get_document))
 		.route("/references/{entity}", get(get_references))

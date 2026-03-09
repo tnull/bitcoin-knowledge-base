@@ -1,9 +1,17 @@
-use axum::response::Html;
+use axum::http::header;
+use axum::response::{Html, IntoResponse};
 
 /// Handler for `GET /` -- serves the landing page.
 pub async fn landing_page() -> Html<&'static str> {
 	Html(LANDING_HTML)
 }
+
+/// Handler for `GET /logo.png` -- serves the embedded logo image.
+pub async fn logo() -> impl IntoResponse {
+	([(header::CONTENT_TYPE, "image/png"), (header::CACHE_CONTROL, "public, max-age=86400")], LOGO)
+}
+
+const LOGO: &[u8] = include_bytes!("../../bkb-logo.png");
 
 const LANDING_HTML: &str = r##"<!DOCTYPE html>
 <html lang="en">
@@ -30,8 +38,9 @@ body {
 	background: var(--bg); color: var(--fg); line-height: 1.6;
 	max-width: 900px; margin: 0 auto; padding: 2rem 1rem;
 }
-h1 { color: var(--accent); margin-bottom: 0.25rem; font-size: 1.8rem; }
-.subtitle { color: var(--muted); margin-bottom: 1.5rem; }
+.logo { margin-bottom: 0.25rem; }
+.logo img { height: 80px; }
+.subtitle { color: var(--muted); margin-bottom: 1rem; }
 .sources { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1.5rem; }
 .badge {
 	display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px;
@@ -62,25 +71,30 @@ h1 { color: var(--accent); margin-bottom: 0.25rem; font-size: 1.8rem; }
 }
 .search-box button:hover { opacity: 0.9; }
 .lookup-row {
-	display: flex; gap: 0.5rem; margin-bottom: 1.5rem; flex-wrap: wrap;
+	display: flex; gap: 0.5rem 1rem; margin-bottom: 1.5rem; flex-wrap: wrap;
 	align-items: center; font-size: 0.9rem;
 }
-.lookup-row label { color: var(--muted); }
-.lookup-row input[type="number"] {
-	width: 80px; padding: 0.4rem; border: 1px solid var(--border);
+.lookup-row .lookup-heading { color: var(--muted); width: 100%; margin-bottom: -0.25rem; }
+.lookup-group {
+	display: inline-flex; gap: 0.3rem; align-items: center; white-space: nowrap;
+}
+.lookup-group label { color: var(--muted); }
+.lookup-group input[type="number"] {
+	width: 70px; padding: 0.4rem; border: 1px solid var(--border);
 	border-radius: 6px; background: var(--input-bg); color: var(--fg);
 }
-.lookup-row input[type="text"] {
-	width: 160px; padding: 0.4rem; border: 1px solid var(--border);
+.lookup-group input[type="text"] {
+	width: 140px; padding: 0.4rem; border: 1px solid var(--border);
 	border-radius: 6px; background: var(--input-bg); color: var(--fg);
 }
-.lookup-row button {
+.lookup-group button {
 	padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: 6px;
 	background: var(--badge-bg); color: var(--fg); cursor: pointer; font-size: 0.85rem;
 }
-.lookup-row button:hover { border-color: var(--accent); }
-#stats {
-	font-size: 0.85rem; color: var(--muted); margin-bottom: 1.5rem;
+.lookup-group button:hover { border-color: var(--accent); }
+footer {
+	margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--border);
+	font-size: 0.8rem; color: var(--muted); text-align: center;
 }
 #results { margin-top: 1rem; }
 .result {
@@ -115,19 +129,9 @@ h1 { color: var(--accent); margin-bottom: 0.25rem; font-size: 1.8rem; }
 </style>
 </head>
 <body>
-<h1>Bitcoin Knowledge Base</h1>
+<div class="logo"><img src="/logo.png" alt="BKB"></div>
 <p class="subtitle">Indexed knowledge from across the Bitcoin and Lightning development ecosystem, queryable by AI agents via MCP.</p>
 
-<div class="sources">
-	<span class="badge">GitHub Issues/PRs</span>
-	<span class="badge">Mailing Lists</span>
-	<span class="badge">IRC Logs</span>
-	<span class="badge">Delving Bitcoin</span>
-	<span class="badge">BIPs</span>
-	<span class="badge">BOLTs</span>
-	<span class="badge">bLIPs</span>
-	<span class="badge">Optech</span>
-</div>
 
 <div class="links">
 	<a href="https://github.com/tnull/bitcoin-knowledge-base">GitHub</a>
@@ -135,8 +139,6 @@ h1 { color: var(--accent); margin-bottom: 0.25rem; font-size: 1.8rem; }
 	<a href="https://github.com/tnull/bitcoin-knowledge-base/blob/main/docs/DESIGN.md">Design Doc</a>
 	<a href="/health">API Health</a>
 </div>
-
-<div id="stats">Loading stats...</div>
 
 <div class="search-box">
 	<input type="text" id="q" placeholder="Search the knowledge base..." autofocus>
@@ -158,19 +160,29 @@ h1 { color: var(--accent); margin-bottom: 0.25rem; font-size: 1.8rem; }
 </div>
 
 <div class="lookup-row">
-	<label>Quick lookup:</label>
-	<label>BIP</label><input type="number" id="bip-num" min="0" placeholder="#">
-	<button onclick="lookupSpec('bip',document.getElementById('bip-num').value)">Go</button>
-	<label>BOLT</label><input type="number" id="bolt-num" min="0" placeholder="#">
-	<button onclick="lookupSpec('bolt',document.getElementById('bolt-num').value)">Go</button>
-	<label>bLIP</label><input type="number" id="blip-num" min="0" placeholder="#">
-	<button onclick="lookupSpec('blip',document.getElementById('blip-num').value)">Go</button>
-	<label>Timeline</label><input type="text" id="timeline-concept" placeholder="concept slug">
-	<button onclick="lookupTimeline()">Go</button>
+	<span class="lookup-heading">Quick lookup:</span>
+	<div class="lookup-group">
+		<label>BIP</label><input type="number" id="bip-num" min="0" placeholder="#">
+		<button onclick="lookupSpec('bip',document.getElementById('bip-num').value)">Go</button>
+	</div>
+	<div class="lookup-group">
+		<label>BOLT</label><input type="number" id="bolt-num" min="0" placeholder="#">
+		<button onclick="lookupSpec('bolt',document.getElementById('bolt-num').value)">Go</button>
+	</div>
+	<div class="lookup-group">
+		<label>bLIP</label><input type="number" id="blip-num" min="0" placeholder="#">
+		<button onclick="lookupSpec('blip',document.getElementById('blip-num').value)">Go</button>
+	</div>
+	<div class="lookup-group">
+		<label>Timeline</label><input type="text" id="timeline-concept" placeholder="concept slug">
+		<button onclick="lookupTimeline()">Go</button>
+	</div>
 </div>
 
 <div id="results"></div>
 <div id="detail"></div>
+
+<footer id="stats">Loading stats...</footer>
 
 <script>
 async function loadStats() {
@@ -188,6 +200,10 @@ async function loadStats() {
 loadStats();
 
 document.getElementById('q').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+document.getElementById('bip-num').addEventListener('keydown', e => { if (e.key === 'Enter') lookupSpec('bip', e.target.value); });
+document.getElementById('bolt-num').addEventListener('keydown', e => { if (e.key === 'Enter') lookupSpec('bolt', e.target.value); });
+document.getElementById('blip-num').addEventListener('keydown', e => { if (e.key === 'Enter') lookupSpec('blip', e.target.value); });
+document.getElementById('timeline-concept').addEventListener('keydown', e => { if (e.key === 'Enter') lookupTimeline(); });
 
 async function doSearch() {
 	const q = document.getElementById('q').value.trim();
