@@ -75,6 +75,9 @@ impl JobQueue {
 
 	/// Add a sync job to the queue.
 	pub async fn add_job(&self, job: SyncJob) {
+		if let Some(ref metrics) = self.metrics {
+			metrics.register_job(&job.source_id);
+		}
 		self.jobs.lock().await.push(job);
 	}
 
