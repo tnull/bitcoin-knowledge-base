@@ -289,13 +289,13 @@ fn tool_definitions() -> serde_json::Value {
 	serde_json::json!([
 		{
 			"name": "bkb_search",
-			"description": "Search the Bitcoin knowledge base across all sources (code, issues, PRs, mailing lists, IRC logs, Delving Bitcoin, BIPs, BOLTs, Optech). Returns matching documents with snippets.",
+			"description": "Search the Bitcoin knowledge base across all sources (code, issues, PRs, mailing lists, IRC logs, Delving Bitcoin, BIPs, BOLTs, Optech). Returns matching documents with snippets. Use query \"*\" with at least one filter (source_type, source_repo, author, after, before) to list all matching documents without a text query -- e.g. all commits in a repo within a date range.",
 			"inputSchema": {
 				"type": "object",
 				"properties": {
 					"query": {
 						"type": "string",
-						"description": "Search query"
+						"description": "Search query (use \"*\" to match all documents when filters are set)"
 					},
 					"source_type": {
 						"type": "string",

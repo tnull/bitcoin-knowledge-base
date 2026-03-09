@@ -32,7 +32,7 @@ Add a `bkb` entry to the `mcpServers` object in `~/.claude.json`:
 
 ## Available Tools
 
-- `bkb_search` -- Full-text search across all sources (filters: `source_type`, `source_repo`, `author`, `after`, `before`, `limit`)
+- `bkb_search` -- Full-text search across all sources (filters: `source_type`, `source_repo`, `author`, `after`, `before`, `limit`). Supports wildcard queries: use `query: "*"` with at least one filter to retrieve all documents matching the filters (e.g., all commits in a repo within a date range).
 - `bkb_get_document` -- Get full document by ID with content, cross-references, and concept tags
 - `bkb_get_references` -- Find all documents referencing an entity (e.g. `BIP-340`, `bitcoin/bitcoin#12345`)
 - `bkb_lookup_bip` -- BIP spec with all referencing discussions and PRs
