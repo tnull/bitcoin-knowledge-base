@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, Utc};
 use reqwest::Client;
 use tracing::{debug, info, warn};
 
@@ -11,36 +11,49 @@ use bkb_core::model::{Document, SourceType};
 use super::{SyncPage, SyncSource};
 use crate::rate_limiter::RateLimiter;
 
-const BITCOINDEV_BASE_URL: &str = "https://gnusha.org/pi/bitcoindev";
+/// The first month to start indexing from. The bitcoin-dev mailing list
+/// archive on gnusha.org goes back to around 2011.
+const ARCHIVE_START: &str = "2011-06";
 
-/// Maximum number of entries to process per page (to keep pages bounded).
-const MAX_ENTRIES_PER_PAGE: usize = 50;
-
-/// Sync source for the bitcoin-dev mailing list (public-inbox archive).
+/// Sync source for a public-inbox mailing list archive at gnusha.org.
 ///
-/// Fetches messages from the public-inbox Atom feed at gnusha.org.
-/// For incremental sync, uses the `new.atom` endpoint.
-/// For initial sync (no cursor), uses date-sorted queries.
-/// Each message becomes one document with `source_type = MailingListMsg`.
-/// The cursor is the ISO 8601 date of the last fetched message.
+/// Uses monthly date windows with offset-based pagination (`o=N`) to walk
+/// the entire archive chronologically, since the Atom feed returns results
+/// newest-first regardless of the date range filter.
+///
+/// Cursor format: `YYYY-MM:OFFSET` (e.g., `2024-06:50`). An offset of 0
+/// is written as just `YYYY-MM`. On initial sync, starts from
+/// [`ARCHIVE_START`].
 pub struct MailingListSyncSource {
+	base_url: String,
+	list_name: String,
 	client: Client,
 }
 
 impl MailingListSyncSource {
 	pub fn new() -> Self {
-		Self { client: Client::new() }
+		Self::with_list("bitcoindev")
 	}
 
-	/// Build the Atom feed URL for a given cursor.
+	pub fn with_list(list: &str) -> Self {
+		Self {
+			base_url: format!("https://gnusha.org/pi/{}", list),
+			list_name: list.to_string(),
+			client: Client::new(),
+		}
+	}
+
+	/// Build the Atom feed URL for a month window with offset.
 	///
-	/// The cursor is a date string (`YYYY-MM-DD`). On initial sync (no cursor),
-	/// we start from an early date so we paginate forward chronologically through
-	/// the entire archive. The bitcoin-dev mailing list archive goes back to
-	/// around 2011, so `2009-01-01` is a safe starting point.
-	fn feed_url(cursor: Option<&str>) -> String {
-		let start_date = cursor.unwrap_or("2009-01-01");
-		format!("{}/?q=d:{}..&x=A", BITCOINDEV_BASE_URL, start_date)
+	/// Queries `d:YYYY-MM-01..YYYY-MM+1-01` to bound results to a single
+	/// month, and uses `o=OFFSET` for pagination within that month.
+	fn feed_url(&self, month: &str, offset: usize) -> String {
+		let (start, end) = month_date_range(month);
+		if offset > 0 {
+			format!("{}/?q=d:{}..{}&x=A&o={}", self.base_url, start, end, offset)
+		} else {
+			format!("{}/?q=d:{}..{}&x=A", self.base_url, start, end)
+		}
 	}
 
 	/// Build the raw message URL for a given message link.
@@ -52,7 +65,7 @@ impl MailingListSyncSource {
 		format!("{}/raw", trimmed)
 	}
 
-	/// Fetch and parse the Atom feed, returning a list of (link, updated_date) tuples.
+	/// Fetch and parse the Atom feed, returning a list of entries.
 	async fn fetch_feed(&self, url: &str, rate_limiter: &RateLimiter) -> Result<Vec<AtomEntry>> {
 		rate_limiter.acquire().await;
 
@@ -112,26 +125,47 @@ impl SyncSource for MailingListSyncSource {
 	async fn fetch_page(
 		&self, cursor: Option<&str>, rate_limiter: &RateLimiter,
 	) -> Result<SyncPage> {
-		let feed_url = Self::feed_url(cursor);
+		// Parse cursor: "YYYY-MM:OFFSET" or "YYYY-MM" (offset 0)
+		let (month, offset) = parse_cursor(cursor);
+
+		let feed_url = self.feed_url(&month, offset);
 		let entries = self.fetch_feed(&feed_url, rate_limiter).await?;
 
 		if entries.is_empty() {
-			debug!("no entries in Atom feed, caught up");
+			// No entries in this month window. If this month is in the past,
+			// advance to the next month. If it's the current or future month,
+			// we're caught up.
+			let today = Utc::now().date_naive();
+			let current_month = format!("{:04}-{:02}", today.year(), today.month());
+			if month < current_month {
+				let next = next_month(&month);
+				info!(
+					source = %self.list_name,
+					month = %month,
+					next_month = %next,
+					"empty month, advancing"
+				);
+				return Ok(SyncPage {
+					documents: vec![],
+					references: vec![],
+					next_cursor: Some(next),
+				});
+			}
+
+			debug!(source = %self.list_name, "caught up with current month");
 			return Ok(SyncPage { documents: vec![], references: vec![], next_cursor: None });
 		}
 
+		let entry_count = entries.len();
 		let mut documents = Vec::new();
-		let mut latest_date: Option<NaiveDate> = None;
 
-		for entry in entries.iter().take(MAX_ENTRIES_PER_PAGE) {
-			// Extract the message ID from the link URL.
-			let message_id = extract_message_id(&entry.link);
+		for entry in &entries {
+			let message_id = extract_message_id(&entry.link, &self.list_name);
 			if message_id.is_empty() {
 				warn!(link = %entry.link, "could not extract message ID from link, skipping");
 				continue;
 			}
 
-			// Fetch raw message.
 			let raw_url = Self::raw_message_url(&entry.link);
 			let raw_text = match self.fetch_raw_message(&raw_url, rate_limiter).await {
 				Ok(text) => text,
@@ -143,12 +177,10 @@ impl SyncSource for MailingListSyncSource {
 
 			let parsed = parse_email_headers(&raw_text);
 
-			// Determine the created_at timestamp from the parsed Date header,
-			// falling back to the Atom entry's updated timestamp.
 			let created_at = parsed
 				.date
 				.as_deref()
-				.and_then(|d| parse_email_date(d))
+				.and_then(parse_email_date)
 				.or_else(|| {
 					DateTime::parse_from_rfc3339(&entry.updated)
 						.ok()
@@ -156,16 +188,10 @@ impl SyncSource for MailingListSyncSource {
 				})
 				.unwrap_or_else(Utc::now);
 
-			// Track the latest date for the cursor.
-			let msg_date = created_at.date_naive();
-			if latest_date.map_or(true, |ld| msg_date > ld) {
-				latest_date = Some(msg_date);
-			}
-
 			let source_id = message_id.to_string();
 			let id = Document::make_id(&SourceType::MailingListMsg, None, &source_id);
 
-			let document = Document {
+			documents.push(Document {
 				id,
 				source_type: SourceType::MailingListMsg,
 				source_repo: None,
@@ -179,36 +205,35 @@ impl SyncSource for MailingListSyncSource {
 				parent_id: None,
 				metadata: None,
 				seq: None,
-			};
-
-			documents.push(document);
+			});
 		}
 
-		// Determine the next cursor. If we processed a full page, there are
-		// likely more entries to fetch, so signal continuation. If the latest
-		// date we saw hasn't advanced beyond the current cursor, bump it by
-		// one day to avoid re-fetching the same page indefinitely.
-		let cursor_date = cursor.and_then(|c| NaiveDate::parse_from_str(c, "%Y-%m-%d").ok());
-		let next_cursor = if entries.len() >= MAX_ENTRIES_PER_PAGE {
-			// Full page -- there's probably more to fetch.
-			let next_date = match (latest_date, cursor_date) {
-				(Some(ld), Some(cd)) if ld <= cd => {
-					// No progress -- skip ahead one day.
-					cd + chrono::Duration::days(1)
-				},
-				(Some(ld), _) => ld,
-				(None, Some(cd)) => cd + chrono::Duration::days(1),
-				(None, None) => chrono::Utc::now().date_naive(),
-			};
-			Some(next_date.format("%Y-%m-%d").to_string())
+		// Determine the next cursor: bump offset within same month, or
+		// advance to the next month if we got a small (likely final) page.
+		// Public-inbox Atom feeds return ~15-30 entries per page.
+		let next_cursor = if entry_count >= 10 {
+			// Likely more entries in this month -- bump offset.
+			let new_offset = offset + entry_count;
+			Some(format!("{}:{}", month, new_offset))
 		} else {
-			// Partial page -- we've caught up.
-			latest_date.map(|d| d.format("%Y-%m-%d").to_string())
+			// Small page -- probably the last page for this month.
+			// Advance to the next month.
+			let today = Utc::now().date_naive();
+			let current_month = format!("{:04}-{:02}", today.year(), today.month());
+			if month < current_month {
+				Some(next_month(&month))
+			} else {
+				// Current month -- we'll re-check on next poll cycle.
+				Some(month.clone())
+			}
 		};
 
 		info!(
-			source = "mailing_list",
-			count = documents.len(),
+			source = %self.list_name,
+			month = %month,
+			offset = offset,
+			entries = entry_count,
+			documents = documents.len(),
 			next_cursor = ?next_cursor,
 			"fetched mailing list messages"
 		);
@@ -221,7 +246,7 @@ impl SyncSource for MailingListSyncSource {
 	}
 
 	fn name(&self) -> &str {
-		"mailing_list:bitcoindev"
+		Box::leak(format!("mailing_list:{}", self.list_name).into_boxed_str())
 	}
 }
 
@@ -301,19 +326,58 @@ fn extract_atom_element(xml: &str, tag: &str) -> Option<String> {
 /// Extract the message ID from a public-inbox link URL.
 ///
 /// Given a URL like `https://gnusha.org/pi/bitcoindev/MSG-ID/`, this returns `MSG-ID`.
-fn extract_message_id(link: &str) -> String {
+fn extract_message_id(link: &str, list_name: &str) -> String {
 	let trimmed = link.trim_end_matches('/');
-	// The message ID is the last path segment after the list name.
-	if let Some(base_pos) = trimmed.find("/pi/bitcoindev/") {
-		let after_base = &trimmed[base_pos + "/pi/bitcoindev/".len()..];
-		// The message ID may contain slashes in theory, but typically it doesn't
-		// for public-inbox. Take everything after the base.
+	let needle = format!("/pi/{}/", list_name);
+	if let Some(base_pos) = trimmed.find(&needle) {
+		let after_base = &trimmed[base_pos + needle.len()..];
 		if !after_base.is_empty() {
 			return after_base.to_string();
 		}
 	}
 	// Fallback: just use the last path segment.
 	trimmed.rsplit('/').next().unwrap_or("").to_string()
+}
+
+/// Parse cursor string into (month, offset).
+///
+/// Cursor format: `"YYYY-MM:OFFSET"` or `"YYYY-MM"` (offset 0).
+/// Returns `(ARCHIVE_START, 0)` for `None`.
+fn parse_cursor(cursor: Option<&str>) -> (String, usize) {
+	match cursor {
+		Some(c) => {
+			if let Some((month, off_str)) = c.split_once(':') {
+				let offset = off_str.parse::<usize>().unwrap_or(0);
+				(month.to_string(), offset)
+			} else {
+				(c.to_string(), 0)
+			}
+		},
+		None => (ARCHIVE_START.to_string(), 0),
+	}
+}
+
+/// Compute the start and end dates for a `YYYY-MM` month string.
+///
+/// Returns `("YYYY-MM-01", "YYYY-MM+1-01")`.
+fn month_date_range(month: &str) -> (String, String) {
+	let parts: Vec<&str> = month.split('-').collect();
+	let year: i32 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(2011);
+	let mon: u32 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(1);
+
+	let start = format!("{:04}-{:02}-01", year, mon);
+	let (ny, nm) = if mon >= 12 { (year + 1, 1) } else { (year, mon + 1) };
+	let end = format!("{:04}-{:02}-01", ny, nm);
+	(start, end)
+}
+
+/// Advance to the next month: `"2024-12"` -> `"2025-01"`.
+fn next_month(month: &str) -> String {
+	let parts: Vec<&str> = month.split('-').collect();
+	let year: i32 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(2011);
+	let mon: u32 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(1);
+	let (ny, nm) = if mon >= 12 { (year + 1, 1) } else { (year, mon + 1) };
+	format!("{:04}-{:02}", ny, nm)
 }
 
 /// Parsed email headers and body.
@@ -444,18 +508,62 @@ fn parse_email_date(date_str: &str) -> Option<DateTime<Utc>> {
 
 #[cfg(test)]
 mod tests {
+	use chrono::NaiveDate;
+
 	use super::*;
 
 	#[test]
-	fn test_feed_url_no_cursor() {
-		let url = MailingListSyncSource::feed_url(None);
-		assert_eq!(url, "https://gnusha.org/pi/bitcoindev/?q=d:2009-01-01..&x=A");
+	fn test_feed_url_no_offset() {
+		let source = MailingListSyncSource::new();
+		let url = source.feed_url("2024-06", 0);
+		assert_eq!(url, "https://gnusha.org/pi/bitcoindev/?q=d:2024-06-01..2024-07-01&x=A");
 	}
 
 	#[test]
-	fn test_feed_url_with_cursor() {
-		let url = MailingListSyncSource::feed_url(Some("2024-06-15"));
-		assert_eq!(url, "https://gnusha.org/pi/bitcoindev/?q=d:2024-06-15..&x=A");
+	fn test_feed_url_with_offset() {
+		let source = MailingListSyncSource::new();
+		let url = source.feed_url("2024-12", 50);
+		assert_eq!(url, "https://gnusha.org/pi/bitcoindev/?q=d:2024-12-01..2025-01-01&x=A&o=50");
+	}
+
+	#[test]
+	fn test_parse_cursor_none() {
+		let (month, offset) = parse_cursor(None);
+		assert_eq!(month, ARCHIVE_START);
+		assert_eq!(offset, 0);
+	}
+
+	#[test]
+	fn test_parse_cursor_month_only() {
+		let (month, offset) = parse_cursor(Some("2024-06"));
+		assert_eq!(month, "2024-06");
+		assert_eq!(offset, 0);
+	}
+
+	#[test]
+	fn test_parse_cursor_with_offset() {
+		let (month, offset) = parse_cursor(Some("2024-06:75"));
+		assert_eq!(month, "2024-06");
+		assert_eq!(offset, 75);
+	}
+
+	#[test]
+	fn test_month_date_range() {
+		assert_eq!(
+			month_date_range("2024-06"),
+			("2024-06-01".to_string(), "2024-07-01".to_string())
+		);
+		assert_eq!(
+			month_date_range("2024-12"),
+			("2024-12-01".to_string(), "2025-01-01".to_string())
+		);
+	}
+
+	#[test]
+	fn test_next_month() {
+		assert_eq!(next_month("2024-06"), "2024-07");
+		assert_eq!(next_month("2024-12"), "2025-01");
+		assert_eq!(next_month("2023-01"), "2023-02");
 	}
 
 	#[test]
@@ -479,13 +587,28 @@ mod tests {
 
 	#[test]
 	fn test_extract_message_id() {
-		let id = extract_message_id("https://gnusha.org/pi/bitcoindev/CABaSBaz7E@mail.gmail.com/");
+		let id = extract_message_id(
+			"https://gnusha.org/pi/bitcoindev/CABaSBaz7E@mail.gmail.com/",
+			"bitcoindev",
+		);
 		assert_eq!(id, "CABaSBaz7E@mail.gmail.com");
 	}
 
 	#[test]
 	fn test_extract_message_id_no_trailing_slash() {
-		let id = extract_message_id("https://gnusha.org/pi/bitcoindev/some-id@example.com");
+		let id = extract_message_id(
+			"https://gnusha.org/pi/bitcoindev/some-id@example.com",
+			"bitcoindev",
+		);
+		assert_eq!(id, "some-id@example.com");
+	}
+
+	#[test]
+	fn test_extract_message_id_lightning_dev() {
+		let id = extract_message_id(
+			"https://gnusha.org/pi/lightning-dev/some-id@example.com/",
+			"lightning-dev",
+		);
 		assert_eq!(id, "some-id@example.com");
 	}
 
@@ -649,6 +772,8 @@ Body.";
 	fn test_name() {
 		let source = MailingListSyncSource::new();
 		assert_eq!(source.name(), "mailing_list:bitcoindev");
+		let source2 = MailingListSyncSource::with_list("lightning-dev");
+		assert_eq!(source2.name(), "mailing_list:lightning-dev");
 	}
 
 	#[test]
