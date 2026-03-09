@@ -25,12 +25,13 @@ if ! id bkb &>/dev/null; then
     useradd --system --no-create-home --shell /usr/sbin/nologin bkb
     echo "Created bkb user"
 fi
-mkdir -p /opt/bkb/data
+mkdir -p /opt/bkb/data /opt/bkb/cache
 chown -R bkb:bkb /opt/bkb
 SETUP
 
-echo "==> Uploading binary..."
+echo "==> Uploading binary and service file..."
 scp "$BINARY" "${VPS_HOST}:/opt/bkb/bkb-server.new"
+scp "contrib/bkb-server.service" "${VPS_HOST}:/etc/systemd/system/bkb-server.service"
 
 echo "==> Installing..."
 ssh "$VPS_HOST" bash -s "$GITHUB_TOKEN" <<'REMOTE'

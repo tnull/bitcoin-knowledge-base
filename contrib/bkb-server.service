@@ -10,7 +10,8 @@ Group=bkb
 WorkingDirectory=/opt/bkb
 ExecStart=/opt/bkb/bkb-server \
     --db /opt/bkb/data/bkb.db \
-    --bind 127.0.0.1:3000
+    --bind 127.0.0.1:3000 \
+    --cache-dir /opt/bkb/cache/repos
 Environment=GITHUB_TOKEN=
 Environment=RUST_LOG=info,bkb_server=debug,bkb_ingest=debug,bkb_store=debug
 Restart=on-failure
@@ -22,7 +23,7 @@ StandardError=journal
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/opt/bkb/data
+ReadWritePaths=/opt/bkb/data /opt/bkb/cache
 PrivateTmp=yes
 
 [Install]
