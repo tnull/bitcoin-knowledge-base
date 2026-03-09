@@ -318,6 +318,7 @@ impl Metrics {
 		}
 
 		let mut job_rows = String::new();
+		let mut paging_rows = String::new();
 		for (source_id, stats) in &jobs {
 			let backlog = if stats.base_interval.as_secs_f64() > 0.0 {
 				stats.last_duration.as_secs_f64() / stats.base_interval.as_secs_f64()
@@ -329,8 +330,7 @@ impl Metrics {
 				None if stats.paginating => "<span class=\"paging\">paginating</span>".to_string(),
 				None => "ok".to_string(),
 			};
-			let _ = write!(
-				job_rows,
+			let row = format!(
 				"<tr><td>{}</td><td class=\"num\">{:.1}s</td><td class=\"num\">{}</td>\
 				 <td class=\"num\">{:.3}</td><td>{}</td></tr>",
 				html_escape(source_id),
@@ -339,6 +339,11 @@ impl Metrics {
 				backlog,
 				status,
 			);
+			if stats.paginating && stats.last_error.is_none() {
+				paging_rows.push_str(&row);
+			} else {
+				job_rows.push_str(&row);
+			}
 		}
 
 		let mut pending_rows = String::new();
@@ -470,6 +475,8 @@ footer {{ margin-top: 2rem; text-align: center; font-size: 0.8rem; color: var(--
 {doc_rows}
 </table>
 
+{paging_section}
+
 <h2>Completed Jobs</h2>
 <table>
 <tr><th>Source</th><th class="num">Duration</th><th class="num">Docs</th><th class="num">Backlog</th><th>Status</th></tr>
@@ -503,6 +510,16 @@ footer {{ margin-top: 2rem; text-align: center; font-size: 0.8rem; color: var(--
 					.to_string()
 			} else {
 				job_rows
+			},
+			paging_section = if paging_rows.is_empty() {
+				String::new()
+			} else {
+				format!(
+					"<h2>Paginating Jobs ({})</h2>\n<table>\n\
+					 <tr><th>Source</th><th class=\"num\">Duration</th><th class=\"num\">Docs</th>\
+					 <th class=\"num\">Backlog</th><th>Status</th></tr>\n{}\n</table>",
+					num_paging, paging_rows
+				)
 			},
 			pending_section = if pending_rows.is_empty() {
 				String::new()
