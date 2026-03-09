@@ -147,6 +147,7 @@ footer {
 		<option value="github_issue">GitHub Issues</option>
 		<option value="github_pr">GitHub PRs</option>
 		<option value="github_comment">GitHub Comments</option>
+		<option value="commit">Commits</option>
 		<option value="bip">BIPs</option>
 		<option value="bolt">BOLTs</option>
 		<option value="blip">bLIPs</option>
