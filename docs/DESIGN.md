@@ -864,7 +864,9 @@ bitcoin-knowledge-base/
 - API: `/references`, `/bip/{n}`, `/bolt/{n}`
 - MCP: `bkb_get_references`, `bkb_lookup_bip`, `bkb_lookup_bolt`
 
-**Deferred from Phase 2:** Git commit ingestion adapter (see Section 13.5).
+- Git commit adapter (`GitCommitSyncSource`) via `git2` (libgit2) bare clones
+  with LRU cache management (`RepoCache`), incremental sync via `revwalk.hide()`,
+  and truncated diffs (8 KB cap) for FTS5 searchability
 
 ### Phase 3: Bitcoin Intelligence -- DONE
 
@@ -894,25 +896,25 @@ The following items were deferred from their original phases. They are
 documented here with rationale for deferral and guidance for future
 implementation.
 
-#### Git Commit Adapter
+#### Git Commit Adapter -- DONE
 
-**Original phase:** Phase 2. **Reason for deferral:** Different ingestion
-pattern from the other adapters. Instead of HTTP API calls, this requires
-local git operations: clone/fetch management (deciding where to store
-repos on disk), commit walking with diff parsing via `git2` (libgit2
-bindings), and associating commits with PRs by matching commit SHAs in
-PR merge events. The `find_commit` MCP tool currently falls back to
-searching PRs by keyword, which covers the most common use case.
+Implemented in Phase 2. `GitCommitSyncSource` in
+`bkb-ingest/src/sources/commits.rs` with `RepoCache` in
+`bkb-ingest/src/repo_cache.rs`.
 
-**Implementation sketch:** Add a `GitCommitSyncSource` that maintains a
-local bare clone (or shallow clone) of each tracked repo. On each
-`fetch_page`, run `git fetch`, then `git log --after={cursor}` to walk
-new commits. Each commit becomes a `Document` with `source_type=commit`,
-`source_id=SHA`, `title=first line of message`, `body=full message`,
-`author=author name`. The cursor is the SHA of the last processed commit.
-Associated PR lookup can use the existing `refs` table (GitHub adapter
-already extracts "Fixes #N" from PR bodies, and commit messages often
-reference PRs).
+**Architecture:**
+- **Bare clones** cached under `--cache-dir` (default `~/.cache/bkb/repos`)
+- **LRU eviction** when cache exceeds `--max-cache-gb` (default 40 GB)
+- **Repo size gate** via GitHub API `/repos/{owner}/{repo}` `size` field;
+  repos exceeding `--max-repo-size-mb` (default 4 GB) are skipped
+- **Incremental sync** via `git2::Revwalk::hide(cursor_oid)` -- only new
+  commits since last sync are processed
+- **Cursor persistence** in `{repo_path}/.bkb_cursor` (survives the job
+  queue's cursor reset between cycles)
+- **Truncated diff** (8 KB cap) appended to commit body for FTS5
+  searchability and concept tagging
+- **Associated PR lookup** in `find_commit`: searches PR bodies for the
+  commit SHA prefix
 
 #### Custom Bitcoin-Aware FTS5 Tokenizer
 

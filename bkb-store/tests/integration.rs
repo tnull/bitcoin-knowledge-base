@@ -414,3 +414,113 @@ async fn test_search_with_source_type_filter() {
 		assert_eq!(r.source_type, SourceType::Bip, "all results should be of type Bip");
 	}
 }
+
+/// Verify that commit documents are properly stored, searchable, and returned
+/// by `find_commit`.
+#[tokio::test]
+async fn test_commit_ingest_and_find() {
+	let store = SqliteStore::open_in_memory().unwrap();
+
+	// Simulate an ingested commit document (as produced by GitCommitSyncSource)
+	let commit = make_doc(
+		SourceType::Commit,
+		Some("lightningdevkit/rust-lightning"),
+		"abc123def456789012345678901234567890abcd",
+		"Fix channel monitor persistence race condition",
+		"Fix channel monitor persistence race condition\n\n\
+		 Ensure monitors are persisted before broadcasting commitment\n\
+		 transactions. This prevents a race where a crash between broadcast\n\
+		 and persistence could lead to loss of funds.\n\
+		 Fixes #4567\n\n\
+		 ---\nChangeset:\n\
+		 1 file(s) changed, 15 insertion(s)(+), 3 deletion(s)(-)\n\
+		 M lightning/src/chain/channelmonitor.rs\n\n\
+		 +    // Persist before broadcast to avoid race\n\
+		 +    self.persist_monitor()?;\n",
+		"TheBlueMatt",
+		Utc.with_ymd_and_hms(2024, 3, 15, 10, 30, 0).unwrap(),
+	);
+	ingest_and_enrich(&store, &commit).await;
+
+	// Search for it by keyword
+	let results = store
+		.search(SearchParams {
+			query: "channel monitor persistence".to_string(),
+			source_type: Some(vec![SourceType::Commit]),
+			..Default::default()
+		})
+		.await
+		.unwrap();
+
+	assert!(!results.results.is_empty(), "should find the commit via FTS5 search");
+	assert_eq!(results.results[0].source_type, SourceType::Commit);
+
+	// Use find_commit
+	let commits = store.find_commit("channel monitor persistence", None).await.unwrap();
+
+	assert!(!commits.is_empty(), "find_commit should return results");
+
+	let found = commits
+		.iter()
+		.find(|c| c.document.source_type == SourceType::Commit)
+		.expect("should include a Commit-type result");
+
+	assert_eq!(found.document.author.as_deref(), Some("TheBlueMatt"));
+	assert_eq!(
+		found.url.as_deref(),
+		Some("https://github.com/lightningdevkit/rust-lightning/commit/abc123def456789012345678901234567890abcd")
+	);
+
+	// Verify enrichment extracted the #4567 issue reference
+	let ctx = store.get_document(&commit.id).await.unwrap().unwrap();
+	let issue_refs: Vec<_> = ctx
+		.outgoing_refs
+		.iter()
+		.filter(|r| r.ref_type == RefType::MentionsIssue || r.ref_type == RefType::Fixes)
+		.collect();
+	assert!(!issue_refs.is_empty(), "commit body should have extracted issue refs (Fixes #4567)");
+}
+
+/// Verify that searching commits by repo filter works.
+#[tokio::test]
+async fn test_find_commit_with_repo_filter() {
+	let store = SqliteStore::open_in_memory().unwrap();
+
+	let commit1 = make_doc(
+		SourceType::Commit,
+		Some("bitcoin/bitcoin"),
+		"1111111111111111111111111111111111111111",
+		"Add taproot validation",
+		"Add taproot validation for BIP-341",
+		"sipa",
+		Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap(),
+	);
+	let commit2 = make_doc(
+		SourceType::Commit,
+		Some("lightningdevkit/rust-lightning"),
+		"2222222222222222222222222222222222222222",
+		"Add taproot channel support",
+		"Add taproot channel support for Lightning",
+		"TheBlueMatt",
+		Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+	);
+
+	ingest_and_enrich(&store, &commit1).await;
+	ingest_and_enrich(&store, &commit2).await;
+
+	// Search without repo filter -- should find both
+	let all = store.find_commit("taproot", None).await.unwrap();
+	assert!(all.len() >= 2, "should find commits from both repos");
+
+	// Search with repo filter
+	let filtered = store.find_commit("taproot", Some("bitcoin/bitcoin")).await.unwrap();
+	for ctx in &filtered {
+		if ctx.document.source_type == SourceType::Commit {
+			assert_eq!(
+				ctx.document.source_repo.as_deref(),
+				Some("bitcoin/bitcoin"),
+				"filtered results should only be from bitcoin/bitcoin"
+			);
+		}
+	}
+}

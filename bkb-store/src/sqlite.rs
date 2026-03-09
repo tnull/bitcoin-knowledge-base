@@ -801,12 +801,8 @@ impl KnowledgeStore for SqliteStore {
 	async fn find_commit(
 		&self, query: &str, repo: Option<&str>,
 	) -> Result<Vec<bkb_core::model::CommitContext>> {
-		// find_commit is implemented as a specialized search with
-		// source_type=commit plus post-processing. Since we don't have
-		// the git commit adapter yet, we search all source types and
-		// return results with associated context.
+		// Search commits first, then also search PRs as fallback context.
 		let mut source_types = vec![SourceType::Commit];
-		// Also search PRs since they often describe the commit's purpose
 		source_types.push(SourceType::GithubPr);
 
 		let params = SearchParams {
@@ -823,15 +819,89 @@ impl KnowledgeStore for SqliteStore {
 		for result in results.results {
 			let doc_ctx = self.get_document(&result.id).await?;
 			if let Some(ctx) = doc_ctx {
+				// For commit documents, look up associated PRs that mention
+				// this commit SHA in their body or via references.
+				let associated_prs = if ctx.document.source_type == SourceType::Commit {
+					self.find_associated_prs(
+						&ctx.document.source_id,
+						ctx.document.source_repo.as_deref(),
+					)
+					.await
+					.unwrap_or_default()
+				} else {
+					Vec::new()
+				};
+
 				contexts.push(bkb_core::model::CommitContext {
 					url: ctx.url.clone(),
 					document: ctx.document,
-					associated_prs: Vec::new(),
+					associated_prs,
 				});
 			}
 		}
 
 		Ok(contexts)
+	}
+}
+
+impl SqliteStore {
+	/// Find PRs that reference a given commit SHA by searching PR bodies for
+	/// the SHA prefix.
+	async fn find_associated_prs(
+		&self, commit_sha: &str, source_repo: Option<&str>,
+	) -> Result<Vec<SearchResult>> {
+		let conn = self.conn.lock().await;
+		let sha = commit_sha.to_string();
+		let repo = source_repo.map(String::from);
+
+		// Search for PRs that mention this commit SHA (use 12-char prefix)
+		let sha_prefix = &sha[..sha.len().min(12)];
+
+		let mut sql = String::from(
+			"SELECT d.id, d.source_type, d.source_repo, d.title, d.author, d.created_at \
+			 FROM documents d \
+			 JOIN documents_fts ON documents_fts.rowid = d.rowid \
+			 WHERE d.source_type = 'github_pr' \
+			 AND documents_fts MATCH ?1",
+		);
+
+		let params: Vec<Box<dyn rusqlite::types::ToSql>> = if let Some(ref repo) = repo {
+			sql.push_str(" AND d.source_repo = ?2");
+			vec![Box::new(sha_prefix.to_string()), Box::new(repo.clone())]
+		} else {
+			vec![Box::new(sha_prefix.to_string())]
+		};
+
+		sql.push_str(" LIMIT 5");
+
+		let mut stmt = conn.prepare(&sql)?;
+		let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+			params.iter().map(|p| p.as_ref()).collect();
+
+		let results = stmt
+			.query_map(param_refs.as_slice(), |row| {
+				Ok(SearchResult {
+					id: row.get(0)?,
+					source_type: SourceType::from_str(&row.get::<_, String>(1)?)
+						.unwrap_or(SourceType::GithubPr),
+					source_repo: row.get(2)?,
+					title: row.get(3)?,
+					snippet: None,
+					author: row.get(4)?,
+					created_at: row
+						.get::<_, String>(5)
+						.ok()
+						.and_then(|s| s.parse().ok())
+						.unwrap_or_else(chrono::Utc::now),
+					score: 0.0,
+					url: None,
+					concepts: Vec::new(),
+				})
+			})?
+			.filter_map(|r| r.ok())
+			.collect();
+
+		Ok(results)
 	}
 }
 

@@ -288,6 +288,11 @@ pub fn extract_issue_refs(text: &str, from_doc_id: &str, source_repo: &str) -> V
 		static RE_BLIP: Regex = Regex::new(r"(?i)\bbLIP[- ]?(\d{1,4})\b").unwrap();
 		// Fixes #1234, Closes #1234
 		static RE_FIXES: Regex = Regex::new(r"(?i)(?:fix(?:es|ed)?|clos(?:es|ed)?|resolv(?:es|ed)?)\s+#(\d+)").unwrap();
+		// Commit SHA references: 7-40 hex chars on a word boundary, not preceded
+		// by common false-positive contexts (color codes, variable names).
+		// We require at least one digit AND at least one letter [a-f] to avoid
+		// matching pure numbers or words.
+		static RE_COMMIT_SHA: Regex = Regex::new(r"(?:^|[\s(,])([0-9a-f]{7,40})\b").unwrap();
 	}
 
 	let mut refs = Vec::new();
@@ -379,6 +384,27 @@ pub fn extract_issue_refs(text: &str, from_doc_id: &str, source_repo: &str) -> V
 				to_external: Some(format!("bLIP-{}", &cap[1])),
 				context: Some(cap[0].to_string()),
 			});
+		}
+	});
+
+	// Commit SHA references
+	RE_COMMIT_SHA.with(|re| {
+		for cap in re.captures_iter(text) {
+			let sha = &cap[1];
+			// Require mixed hex: at least one digit and at least one a-f letter
+			// to avoid matching pure decimal numbers or dictionary words
+			let has_digit = sha.bytes().any(|b| b.is_ascii_digit());
+			let has_alpha = sha.bytes().any(|b| matches!(b, b'a'..=b'f'));
+			if has_digit && has_alpha {
+				refs.push(Reference {
+					id: None,
+					from_doc_id: from_doc_id.to_string(),
+					to_doc_id: None,
+					ref_type: RefType::ReferencesCommit,
+					to_external: Some(sha.to_string()),
+					context: Some(cap[0].trim().to_string()),
+				});
+			}
 		}
 	});
 
@@ -484,5 +510,64 @@ mod tests {
 		let issue_refs: Vec<_> =
 			refs.iter().filter(|r| r.ref_type == RefType::MentionsIssue).collect();
 		assert!(issue_refs.is_empty());
+	}
+
+	#[test]
+	fn test_extract_commit_sha_full() {
+		let refs = extract_issue_refs(
+			"Cherry-picked from abc123def456789012345678901234567890abcd",
+			"doc:1",
+			"bitcoin/bitcoin",
+		);
+		let sha_refs: Vec<_> =
+			refs.iter().filter(|r| r.ref_type == RefType::ReferencesCommit).collect();
+		assert_eq!(sha_refs.len(), 1);
+		assert_eq!(
+			sha_refs[0].to_external.as_deref(),
+			Some("abc123def456789012345678901234567890abcd")
+		);
+	}
+
+	#[test]
+	fn test_extract_commit_sha_short() {
+		let refs = extract_issue_refs(
+			"Reverts abc123f in the previous release",
+			"doc:1",
+			"bitcoin/bitcoin",
+		);
+		let sha_refs: Vec<_> =
+			refs.iter().filter(|r| r.ref_type == RefType::ReferencesCommit).collect();
+		assert_eq!(sha_refs.len(), 1);
+		assert_eq!(sha_refs[0].to_external.as_deref(), Some("abc123f"));
+	}
+
+	#[test]
+	fn test_no_false_positive_pure_numbers() {
+		// Pure decimal digits should not match as a commit SHA
+		let refs = extract_issue_refs("Error code 1234567", "doc:1", "bitcoin/bitcoin");
+		let sha_refs: Vec<_> =
+			refs.iter().filter(|r| r.ref_type == RefType::ReferencesCommit).collect();
+		assert!(sha_refs.is_empty(), "pure numbers should not match as SHA");
+	}
+
+	#[test]
+	fn test_no_false_positive_short_hex() {
+		// 6-char hex is too short
+		let refs = extract_issue_refs("value abc123 is used", "doc:1", "bitcoin/bitcoin");
+		let sha_refs: Vec<_> =
+			refs.iter().filter(|r| r.ref_type == RefType::ReferencesCommit).collect();
+		assert!(sha_refs.is_empty(), "6-char hex should not match as SHA");
+	}
+
+	#[test]
+	fn test_extract_multiple_commit_shas() {
+		let refs = extract_issue_refs(
+			"Compare abc123f and def456a for the regression",
+			"doc:1",
+			"bitcoin/bitcoin",
+		);
+		let sha_refs: Vec<_> =
+			refs.iter().filter(|r| r.ref_type == RefType::ReferencesCommit).collect();
+		assert_eq!(sha_refs.len(), 2, "should find two commit SHAs");
 	}
 }

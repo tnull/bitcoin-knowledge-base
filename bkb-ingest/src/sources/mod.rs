@@ -1,3 +1,4 @@
+pub mod commits;
 pub mod delving;
 pub mod github;
 pub mod irc;

@@ -2,6 +2,7 @@ mod api;
 mod config;
 mod landing;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -11,6 +12,8 @@ use tracing::info;
 
 use bkb_ingest::queue::{JobQueue, Priority, SyncJob};
 use bkb_ingest::rate_limiter::RateLimiter;
+use bkb_ingest::repo_cache::RepoCache;
+use bkb_ingest::sources::commits::GitCommitSyncSource;
 use bkb_ingest::sources::delving::DelvingSyncSource;
 use bkb_ingest::sources::github::{GitHubCommentSyncSource, GitHubIssueSyncSource};
 use bkb_ingest::sources::irc::IrcLogSyncSource;
@@ -54,6 +57,18 @@ struct Cli {
 	/// Maximum number of pages to fetch when using --ingest-only.
 	#[arg(long, default_value = "1")]
 	limit_pages: u32,
+
+	/// Directory for cached git bare clones.
+	#[arg(long, env = "BKB_CACHE_DIR", default_value = "~/.cache/bkb/repos")]
+	cache_dir: String,
+
+	/// Maximum total cache size in GB.
+	#[arg(long, default_value = "40")]
+	max_cache_gb: u64,
+
+	/// Maximum single repo size in MB (skip larger repos).
+	#[arg(long, default_value = "4096")]
+	max_repo_size_mb: u64,
 }
 
 #[tokio::main]
@@ -69,6 +84,14 @@ async fn main() -> Result<()> {
 	let cli = Cli::parse();
 	let config = Config::new(cli.dev_subset);
 
+	// Expand ~ in cache_dir
+	let cache_dir = expand_tilde(&cli.cache_dir);
+	let repo_cache = Arc::new(RepoCache::new(
+		cache_dir,
+		cli.max_cache_gb * 1024 * 1024 * 1024,
+		cli.max_repo_size_mb * 1024,
+	)?);
+
 	info!(db = %cli.db, bind = %cli.bind, dev_subset = cli.dev_subset, "starting BKB server");
 
 	let store = Arc::new(SqliteStore::open(std::path::Path::new(&cli.db))?);
@@ -76,7 +99,7 @@ async fn main() -> Result<()> {
 
 	// Single-source ingest mode
 	if let Some(ref source_spec) = cli.ingest_only {
-		return run_single_source(source_spec, &cli, &store).await;
+		return run_single_source(source_spec, &cli, &store, &repo_cache).await;
 	}
 
 	// Start HTTP API server
@@ -254,8 +277,31 @@ async fn main() -> Result<()> {
 			info!("registered Optech newsletter sync source");
 		}
 
+		// Register git commit sources per repo
+		for (owner, repo) in &repos {
+			let commit_source = GitCommitSyncSource::new(
+				owner,
+				repo,
+				Arc::clone(&repo_cache),
+				cli.github_token.clone(),
+			);
+			let commit_interval = commit_source.poll_interval();
+			queue
+				.add_job(SyncJob {
+					source_id: format!("commits:{}/{}", owner, repo),
+					source: Box::new(commit_source),
+					priority: Priority::Low,
+					cursor: None,
+					next_run: Instant::now(),
+					retry_count: 0,
+					base_interval: commit_interval,
+				})
+				.await;
+		}
+		info!(repos = repos.len(), "registered git commit sync sources");
+
 		// +5 for mailing list, BIPs, BOLTs, bLIPs, Optech
-		let total_sources = repos.len() * 2
+		let total_sources = repos.len() * 3 // issues + comments + commits
 			+ config.irc_channels().len()
 			+ if config.sync_delving() { 1 } else { 0 }
 			+ 5;
@@ -280,7 +326,9 @@ async fn main() -> Result<()> {
 }
 
 /// Run a single source adapter for a limited number of pages, then exit.
-async fn run_single_source(spec: &str, cli: &Cli, store: &Arc<SqliteStore>) -> Result<()> {
+async fn run_single_source(
+	spec: &str, cli: &Cli, store: &Arc<SqliteStore>, repo_cache: &Arc<RepoCache>,
+) -> Result<()> {
 	let rate_limiter = Arc::new(RateLimiter::new(200));
 	let token = cli.github_token.clone();
 
@@ -290,6 +338,12 @@ async fn run_single_source(spec: &str, cli: &Cli, store: &Arc<SqliteStore>) -> R
 			anyhow::bail!("invalid github spec, expected 'github:owner/repo'");
 		}
 		Box::new(GitHubIssueSyncSource::new(parts[0], parts[1], token))
+	} else if let Some(rest) = spec.strip_prefix("commits:") {
+		let parts: Vec<&str> = rest.splitn(2, '/').collect();
+		if parts.len() != 2 {
+			anyhow::bail!("invalid commits spec, expected 'commits:owner/repo'");
+		}
+		Box::new(GitCommitSyncSource::new(parts[0], parts[1], Arc::clone(repo_cache), token))
 	} else if let Some(channel) = spec.strip_prefix("irc:") {
 		Box::new(IrcLogSyncSource::new(channel))
 	} else if spec == "delving" {
@@ -306,8 +360,8 @@ async fn run_single_source(spec: &str, cli: &Cli, store: &Arc<SqliteStore>) -> R
 		Box::new(OptechNewsletterSyncSource::new(token))
 	} else {
 		anyhow::bail!(
-			"unknown source: '{}'. Expected: github:owner/repo, irc:channel, delving, \
-			 mailing_list, bips, bolts, blips, optech",
+			"unknown source: '{}'. Expected: github:owner/repo, commits:owner/repo, \
+			 irc:channel, delving, mailing_list, bips, bolts, blips, optech",
 			spec
 		);
 	};
@@ -361,4 +415,14 @@ async fn run_single_source(spec: &str, cli: &Cli, store: &Arc<SqliteStore>) -> R
 	}
 
 	Ok(())
+}
+
+/// Expand `~` at the start of a path to the user's home directory.
+fn expand_tilde(path: &str) -> PathBuf {
+	if let Some(rest) = path.strip_prefix("~/") {
+		if let Ok(home) = std::env::var("HOME") {
+			return PathBuf::from(home).join(rest);
+		}
+	}
+	PathBuf::from(path)
 }

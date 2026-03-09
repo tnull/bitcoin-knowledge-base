@@ -50,6 +50,9 @@ clap = { version = "4", features = ["derive", "env"] }
 # Regex
 regex = "1"
 
+# Git
+git2 = "0.20"
+
 [profile.release]
 lto = true
 codegen-units = 1
