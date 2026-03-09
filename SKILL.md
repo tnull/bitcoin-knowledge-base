@@ -7,17 +7,21 @@ Bitcoin, and Optech newsletters.
 ## Setup
 
 Install the `bkb-mcp` client and add it to your Claude Code MCP
-configuration (`~/.claude/claude_code_config.json`):
+configuration (`~/.claude.json`):
 
 ```bash
 cargo install --git https://github.com/tnull/bitcoin-knowledge-base.git bkb-mcp
 ```
 
+Add a `bkb` entry to the `mcpServers` object in `~/.claude.json`:
+
 ```json
 {
   "mcpServers": {
     "bkb": {
+      "type": "stdio",
       "command": "bkb-mcp",
+      "args": [],
       "env": {
         "BKB_API_URL": "https://bitcoinknowledge.dev"
       }
