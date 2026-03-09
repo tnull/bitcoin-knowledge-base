@@ -14,6 +14,8 @@ pub struct JobRunStats {
 	pub base_interval: Duration,
 	pub last_completed: Instant,
 	pub last_error: Option<String>,
+	/// `true` if the last run returned a `next_cursor` (more pages to fetch).
+	pub paginating: bool,
 }
 
 /// Shared metrics collector for the BKB server.
@@ -97,7 +99,7 @@ impl Metrics {
 	/// Record the result of a job run.
 	pub fn record_job_run(
 		&self, source_id: &str, duration: Duration, docs: u32, base_interval: Duration,
-		error: Option<String>,
+		error: Option<String>, paginating: bool,
 	) {
 		let mut stats = self.job_stats.lock().unwrap();
 		stats.insert(
@@ -108,6 +110,7 @@ impl Metrics {
 				base_interval,
 				last_completed: Instant::now(),
 				last_error: error,
+				paginating,
 			},
 		);
 	}
@@ -285,18 +288,23 @@ impl Metrics {
 
 		let total_registered = registered.len();
 		let num_finished = total_registered - pending.len();
-		let num_ok = jobs.iter().filter(|(_, s)| s.last_error.is_none()).count();
+		let num_ok = jobs.iter().filter(|(_, s)| s.last_error.is_none() && !s.paginating).count();
+		let num_paging =
+			jobs.iter().filter(|(_, s)| s.last_error.is_none() && s.paginating).count();
 		let num_err = jobs.iter().filter(|(_, s)| s.last_error.is_some()).count();
 		let num_pending = pending.len();
 
 		// Progress bar percentages
-		let (pct_ok, pct_err, pct_pending) = if total_registered > 0 {
-			let ok = num_ok as f64 / total_registered as f64 * 100.0;
-			let err = num_err as f64 / total_registered as f64 * 100.0;
-			let pend = num_pending as f64 / total_registered as f64 * 100.0;
-			(ok, err, pend)
+		let (pct_ok, pct_paging, pct_err, pct_pending) = if total_registered > 0 {
+			let t = total_registered as f64;
+			(
+				num_ok as f64 / t * 100.0,
+				num_paging as f64 / t * 100.0,
+				num_err as f64 / t * 100.0,
+				num_pending as f64 / t * 100.0,
+			)
 		} else {
-			(0.0, 0.0, 0.0)
+			(0.0, 0.0, 0.0, 0.0)
 		};
 
 		let mut doc_rows = String::new();
@@ -318,6 +326,7 @@ impl Metrics {
 			};
 			let status = match &stats.last_error {
 				Some(e) => format!("<span class=\"err\">{}</span>", html_escape(e)),
+				None if stats.paginating => "<span class=\"paging\">paginating</span>".to_string(),
 				None => "ok".to_string(),
 			};
 			let _ = write!(
@@ -371,13 +380,13 @@ impl Metrics {
 :root {{
 	--bg: #fafafa; --fg: #1a1a1a; --muted: #666; --border: #ddd;
 	--card-bg: #fff; --accent: #f7931a; --accent2: #4a90d9;
-	--table-stripe: #f5f5f5; --ok: #27ae60; --err: #e74c3c; --pend: #95a5a6;
+	--table-stripe: #f5f5f5; --ok: #27ae60; --paging: #f39c12; --err: #e74c3c; --pend: #95a5a6;
 }}
 @media (prefers-color-scheme: dark) {{
 	:root {{
 		--bg: #1a1a2e; --fg: #e0e0e0; --muted: #999; --border: #333;
 		--card-bg: #16213e; --accent: #f7931a; --accent2: #6db3f2;
-		--table-stripe: #1e2a45; --ok: #2ecc71; --err: #e74c3c; --pend: #7f8c8d;
+		--table-stripe: #1e2a45; --ok: #2ecc71; --paging: #f1c40f; --err: #e74c3c; --pend: #7f8c8d;
 	}}
 }}
 * {{ box-sizing: border-box; margin: 0; padding: 0; }}
@@ -400,6 +409,7 @@ th {{ text-align: left; padding: 0.5rem 0.75rem; background: var(--table-stripe)
 td {{ padding: 0.5rem 0.75rem; border-top: 1px solid var(--border); font-size: 0.9rem; }}
 .num {{ text-align: right; font-variant-numeric: tabular-nums; }}
 .err {{ color: var(--err); font-size: 0.8rem; }}
+.paging {{ color: var(--paging); font-size: 0.8rem; }}
 .pending {{ color: var(--pend); font-style: italic; }}
 .bar-container {{
 	background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px;
@@ -410,6 +420,7 @@ td {{ padding: 0.5rem 0.75rem; border-top: 1px solid var(--border); font-size: 0
 	display: flex; background: var(--table-stripe);
 }}
 .bar-ok {{ background: var(--ok); height: 100%; transition: width 0.5s; }}
+.bar-paging {{ background: var(--paging); height: 100%; transition: width 0.5s; }}
 .bar-err {{ background: var(--err); height: 100%; transition: width 0.5s; }}
 .bar-pend {{ background: var(--pend); height: 100%; transition: width 0.5s; }}
 .bar-legend {{
@@ -420,6 +431,7 @@ td {{ padding: 0.5rem 0.75rem; border-top: 1px solid var(--border); font-size: 0
 	border-radius: 2px; margin-right: 0.3rem; vertical-align: middle;
 }}
 .bar-legend .leg-ok::before {{ background: var(--ok); }}
+.bar-legend .leg-paging::before {{ background: var(--paging); }}
 .bar-legend .leg-err::before {{ background: var(--err); }}
 .bar-legend .leg-pend::before {{ background: var(--pend); }}
 footer {{ margin-top: 2rem; text-align: center; font-size: 0.8rem; color: var(--muted); }}
@@ -440,11 +452,13 @@ footer {{ margin-top: 2rem; text-align: center; font-size: 0.8rem; color: var(--
 <div class="bar-container">
 <div class="bar-track">
 <div class="bar-ok" style="width:{pct_ok:.1}%"></div>
+<div class="bar-paging" style="width:{pct_paging:.1}%"></div>
 <div class="bar-err" style="width:{pct_err:.1}%"></div>
 <div class="bar-pend" style="width:{pct_pending:.1}%"></div>
 </div>
 <div class="bar-legend">
-<span class="leg-ok">OK: {num_ok}</span>
+<span class="leg-ok">Caught up: {num_ok}</span>
+<span class="leg-paging">Paginating: {num_paging}</span>
 <span class="leg-err">Error: {num_err}</span>
 <span class="leg-pend">Pending: {num_pending}</span>
 </div>
@@ -476,9 +490,11 @@ footer {{ margin-top: 2rem; text-align: center; font-size: 0.8rem; color: var(--
 			num_finished = num_finished,
 			total_registered = total_registered,
 			pct_ok = pct_ok,
+			pct_paging = pct_paging,
 			pct_err = pct_err,
 			pct_pending = pct_pending,
 			num_ok = num_ok,
+			num_paging = num_paging,
 			num_err = num_err,
 			num_pending = num_pending,
 			doc_rows = doc_rows,
@@ -555,12 +571,29 @@ mod tests {
 			42,
 			Duration::from_secs(3600),
 			None,
+			false,
 		);
 		let snapshot = metrics.job_stats_snapshot();
 		assert_eq!(snapshot.len(), 1);
 		assert_eq!(snapshot[0].0, "test:source");
 		assert_eq!(snapshot[0].1.last_docs, 42);
 		assert!(snapshot[0].1.last_error.is_none());
+		assert!(!snapshot[0].1.paginating);
+	}
+
+	#[test]
+	fn test_record_job_run_paginating() {
+		let metrics = Metrics::new(PathBuf::from("/tmp/test.db"), None, None);
+		metrics.record_job_run(
+			"test:source",
+			Duration::from_secs(2),
+			200,
+			Duration::from_secs(3600),
+			None,
+			true,
+		);
+		let snapshot = metrics.job_stats_snapshot();
+		assert!(snapshot[0].1.paginating);
 	}
 
 	#[test]
@@ -596,6 +629,7 @@ mod tests {
 			10,
 			Duration::from_secs(60),
 			None,
+			false,
 		);
 		assert_eq!(metrics.pending_jobs().len(), 2);
 		assert!(!metrics.pending_jobs().contains(&"source:a".to_string()));
@@ -606,13 +640,20 @@ mod tests {
 		let metrics = Metrics::new(PathBuf::from("/tmp/test.db"), None, None);
 		metrics.register_job("test:a");
 		metrics.register_job("test:b");
-		metrics.record_job_run("test:a", Duration::from_secs(1), 5, Duration::from_secs(60), None);
+		metrics.record_job_run(
+			"test:a",
+			Duration::from_secs(1),
+			5,
+			Duration::from_secs(60),
+			None,
+			false,
+		);
 		let doc_stats = vec![("bip".to_string(), 10i64)];
 		let html = metrics.render_dashboard_html(&doc_stats, "abc1234");
 		assert!(html.contains("BKB Admin Dashboard"));
 		assert!(html.contains("bip"));
 		assert!(html.contains("Job Progress (1 / 2)"));
-		assert!(html.contains("OK: 1"));
+		assert!(html.contains("Caught up: 1"));
 		assert!(html.contains("Pending: 1"));
 		assert!(html.contains("abc1234"));
 		assert!(html.contains("Pending Jobs"));

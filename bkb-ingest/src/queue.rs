@@ -162,18 +162,8 @@ impl JobQueue {
 
 				info!(source = %source_name, documents = doc_count, "page processed");
 
-				// Record metrics
-				if let Some(ref metrics) = self.metrics {
-					metrics.record_job_run(
-						&job.source_id,
-						started.elapsed(),
-						doc_count as u32,
-						job.base_interval,
-						None,
-					);
-				}
-
 				// Determine next run
+				let paginating = page.next_cursor.is_some();
 				if let Some(next_cursor) = page.next_cursor {
 					// More pages to fetch -- run immediately
 					job.cursor = Some(next_cursor);
@@ -192,6 +182,18 @@ impl JobQueue {
 						"sync cycle complete, scheduling next run"
 					);
 				}
+
+				// Record metrics
+				if let Some(ref metrics) = self.metrics {
+					metrics.record_job_run(
+						&job.source_id,
+						started.elapsed(),
+						doc_count as u32,
+						job.base_interval,
+						None,
+						paginating,
+					);
+				}
 			},
 			Err(e) => {
 				// Record metrics for failed run
@@ -202,6 +204,7 @@ impl JobQueue {
 						0,
 						job.base_interval,
 						Some(e.to_string()),
+						false,
 					);
 				}
 
