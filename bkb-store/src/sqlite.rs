@@ -427,23 +427,54 @@ impl KnowledgeStore for SqliteStore {
 		let conn = self.conn.lock().await;
 		let limit = params.limit.unwrap_or(20).min(100);
 
-		// Build the FTS5 query
-		let fts_query = build_fts_query(&params.query);
+		let query_trimmed = params.query.trim();
+		let is_wildcard = query_trimmed.is_empty() || query_trimmed == "*";
 
-		let mut sql = String::from(
-			"SELECT d.id, d.source_type, d.source_repo, d.title,
-				snippet(documents_fts, 1, '<mark>', '</mark>', '...', 64) as snippet,
-				d.author, d.created_at,
-				bm25(documents_fts, 5.0, 1.0) as score,
-				d.source_id, d.parent_id, d.metadata
-			 FROM documents_fts
-			 JOIN documents d ON d.rowid = documents_fts.rowid
-			 WHERE documents_fts MATCH ?1",
-		);
+		// Wildcard queries require at least one filter to avoid full table scans.
+		if is_wildcard {
+			let has_filter = params.source_type.as_ref().is_some_and(|v| !v.is_empty())
+				|| params.source_repo.as_ref().is_some_and(|v| !v.is_empty())
+				|| params.author.is_some()
+				|| params.after.is_some()
+				|| params.before.is_some();
+			if !has_filter {
+				anyhow::bail!(
+					"wildcard queries require at least one filter \
+					 (source_type, source_repo, author, after, or before)"
+				);
+			}
+		}
 
-		let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
-			vec![Box::new(fts_query.clone())];
-		let mut param_idx = 2;
+		let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+		let mut param_idx = 1;
+
+		let mut sql = if is_wildcard {
+			// No FTS -- query directly from documents table
+			String::from(
+				"SELECT d.id, d.source_type, d.source_repo, d.title,
+					NULL as snippet,
+					d.author, d.created_at,
+					0.0 as score,
+					d.source_id, d.parent_id, d.metadata
+				 FROM documents d
+				 WHERE 1=1",
+			)
+		} else {
+			// Full-text search via FTS5
+			let fts_query = build_fts_query(query_trimmed);
+			param_values.push(Box::new(fts_query));
+			param_idx = 2;
+			String::from(
+				"SELECT d.id, d.source_type, d.source_repo, d.title,
+					snippet(documents_fts, 1, '<mark>', '</mark>', '...', 64) as snippet,
+					d.author, d.created_at,
+					bm25(documents_fts, 5.0, 1.0) as score,
+					d.source_id, d.parent_id, d.metadata
+				 FROM documents_fts
+				 JOIN documents d ON d.rowid = documents_fts.rowid
+				 WHERE documents_fts MATCH ?1",
+			)
+		};
 
 		// Source type filter
 		if let Some(ref source_types) = params.source_type {
@@ -494,7 +525,11 @@ impl KnowledgeStore for SqliteStore {
 			let _ = param_idx;
 		}
 
-		sql.push_str(" ORDER BY score LIMIT ?");
+		if is_wildcard {
+			sql.push_str(" ORDER BY d.created_at DESC LIMIT ?");
+		} else {
+			sql.push_str(" ORDER BY score LIMIT ?");
+		}
 		param_values.push(Box::new(limit as i64));
 
 		let param_refs: Vec<&dyn rusqlite::types::ToSql> =
