@@ -1,0 +1,29 @@
+[Unit]
+Description=Bitcoin Knowledge Base Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bkb
+Group=bkb
+WorkingDirectory=/opt/bkb
+ExecStart=/opt/bkb/bkb-server \
+    --db /opt/bkb/data/bkb.db \
+    --bind 127.0.0.1:3000
+Environment=GITHUB_TOKEN=
+Environment=RUST_LOG=info,bkb_server=debug,bkb_ingest=debug,bkb_store=debug
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/bkb/data
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
