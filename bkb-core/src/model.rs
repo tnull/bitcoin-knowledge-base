@@ -123,13 +123,22 @@ impl Document {
 				self.source_id
 			)),
 			SourceType::GithubComment => {
-				// Comment IDs don't directly map to URLs without the issue number,
-				// but we can use the GitHub API URL pattern.
-				Some(format!(
-					"https://github.com/{}/issues/comments/{}",
-					self.source_repo.as_deref()?,
-					self.source_id
-				))
+				// Extract the issue/PR number from parent_id (e.g. "github_issue:owner/repo:123")
+				// to build a proper permalink. GitHub redirects /issues/N to /pull/N for PRs.
+				let issue_num = self
+					.parent_id
+					.as_deref()
+					.and_then(|pid| pid.rsplit(':').next())
+					.filter(|n| n.chars().all(|c| c.is_ascii_digit()));
+				match issue_num {
+					Some(num) => Some(format!(
+						"https://github.com/{}/issues/{}#issuecomment-{}",
+						self.source_repo.as_deref()?,
+						num,
+						self.source_id
+					)),
+					None => None,
+				}
 			},
 			SourceType::Commit => Some(format!(
 				"https://github.com/{}/commit/{}",
@@ -337,5 +346,67 @@ impl SyncStatus {
 			"error" => Self::Error,
 			_ => Self::Pending,
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn make_doc(source_type: SourceType, source_repo: Option<&str>, source_id: &str) -> Document {
+		Document {
+			id: Document::make_id(&source_type, source_repo, source_id),
+			source_type,
+			source_repo: source_repo.map(|s| s.to_string()),
+			source_id: source_id.to_string(),
+			title: None,
+			body: None,
+			author: None,
+			author_id: None,
+			created_at: chrono::Utc::now(),
+			updated_at: None,
+			parent_id: None,
+			metadata: None,
+			seq: None,
+		}
+	}
+
+	#[test]
+	fn test_comment_url_with_parent_id() {
+		let mut doc =
+			make_doc(SourceType::GithubComment, Some("lightningdevkit/ldk-sample"), "2135734193");
+		doc.parent_id = Some("github_issue:lightningdevkit/ldk-sample:133".to_string());
+		assert_eq!(
+			doc.url().unwrap(),
+			"https://github.com/lightningdevkit/ldk-sample/issues/133#issuecomment-2135734193"
+		);
+	}
+
+	#[test]
+	fn test_comment_url_without_parent_id() {
+		let doc =
+			make_doc(SourceType::GithubComment, Some("lightningdevkit/ldk-sample"), "2135734193");
+		assert!(doc.url().is_none());
+	}
+
+	#[test]
+	fn test_issue_url() {
+		let doc = make_doc(SourceType::GithubIssue, Some("bitcoin/bitcoin"), "12345");
+		assert_eq!(doc.url().unwrap(), "https://github.com/bitcoin/bitcoin/issues/12345");
+	}
+
+	#[test]
+	fn test_bip_url() {
+		let doc = make_doc(SourceType::Bip, None, "340");
+		assert_eq!(
+			doc.url().unwrap(),
+			"https://github.com/bitcoin/bips/blob/master/bip-340.mediawiki"
+		);
+	}
+
+	#[test]
+	fn test_blip_url() {
+		let doc = make_doc(SourceType::Blip, None, "1");
+		assert_eq!(doc.url().unwrap(), "https://github.com/lightning/blips/blob/master/blip-1.md");
 	}
 }

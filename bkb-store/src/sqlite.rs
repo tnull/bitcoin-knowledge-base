@@ -435,7 +435,7 @@ impl KnowledgeStore for SqliteStore {
 				snippet(documents_fts, 1, '<mark>', '</mark>', '...', 64) as snippet,
 				d.author, d.created_at,
 				bm25(documents_fts, 5.0, 1.0) as score,
-				d.source_id
+				d.source_id, d.parent_id
 			 FROM documents_fts
 			 JOIN documents d ON d.rowid = documents_fts.rowid
 			 WHERE documents_fts MATCH ?1",
@@ -510,6 +510,7 @@ impl KnowledgeStore for SqliteStore {
 					SourceType::from_str(&source_type_str).unwrap_or(SourceType::GithubIssue);
 				let source_repo: Option<String> = row.get(2)?;
 				let source_id: String = row.get(8)?;
+				let parent_id: Option<String> = row.get(9)?;
 				let doc = Document {
 					id: String::new(),
 					source_type: source_type.clone(),
@@ -521,7 +522,7 @@ impl KnowledgeStore for SqliteStore {
 					author_id: None,
 					created_at: chrono::Utc::now(),
 					updated_at: None,
-					parent_id: None,
+					parent_id,
 					metadata: None,
 					seq: None,
 				};
@@ -727,7 +728,8 @@ impl KnowledgeStore for SqliteStore {
 		let conn = self.conn.lock().await;
 
 		let mut sql = String::from(
-			"SELECT d.id, d.source_type, d.title, d.created_at, d.source_repo, d.source_id
+			"SELECT d.id, d.source_type, d.title, d.created_at, d.source_repo, d.source_id,
+				d.parent_id
 			 FROM concept_mentions cm
 			 JOIN documents d ON d.id = cm.doc_id
 			 WHERE cm.concept_slug = ?1",
@@ -764,6 +766,7 @@ impl KnowledgeStore for SqliteStore {
 					SourceType::from_str(&source_type_str).unwrap_or(SourceType::GithubIssue);
 				let source_repo: Option<String> = row.get(4)?;
 				let source_id: String = row.get(5)?;
+				let parent_id: Option<String> = row.get(6)?;
 				let doc = Document {
 					id: String::new(),
 					source_type: source_type.clone(),
@@ -775,7 +778,7 @@ impl KnowledgeStore for SqliteStore {
 					author_id: None,
 					created_at: chrono::Utc::now(),
 					updated_at: None,
-					parent_id: None,
+					parent_id,
 					metadata: None,
 					seq: None,
 				};
