@@ -80,6 +80,11 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+	// Set SSL_CERT_FILE/SSL_CERT_DIR so that libgit2's statically-linked
+	// OpenSSL can find the system CA certificates.
+	// SAFETY: called once at startup before any threads are spawned.
+	unsafe { openssl_probe::init_openssl_env_vars() };
+
 	tracing_subscriber::fmt()
 		.with_env_filter(
 			tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
