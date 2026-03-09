@@ -840,7 +840,7 @@ bitcoin-knowledge-base/
 
 ## 13. Implementation Roadmap
 
-### Phase 1: Foundation (MVP)
+### Phase 1: Foundation (MVP) -- DONE
 
 - Set up workspace and `bkb-core` types/traits
 - SQLite schema + migrations in `bkb-store`
@@ -849,43 +849,121 @@ bitcoin-knowledge-base/
 - Rate limiter + job queue
 - HTTP API: `/search`, `/document/{id}`
 - MCP server: `bkb_search`, `bkb_get_document`
-- **Target:** single repo (`lightningdevkit/rust-lightning`) fully indexed and
+- **Target:** single repo (`lightningdevkit/ldk-sample`) fully indexed and
   queryable end-to-end
 
-### Phase 2: Full Source Coverage
+### Phase 2: Full Source Coverage -- DONE
 
-- Git commit ingestion adapter
-- Mailing list adapter (mbox parsing)
-- IRC log adapter (gnusha.org scraping)
-- Delving Bitcoin adapter (Discourse API)
-- Optech content adapter
-- BIP/BOLT spec adapter
-- Cross-reference extraction enricher
+- Mailing list adapter (public-inbox Atom feed + raw email parsing)
+- IRC log adapter (gnusha.org daily log scraping)
+- Delving Bitcoin adapter (Discourse REST API)
+- Optech newsletter adapter (GitHub contents API)
+- BIP/BOLT spec adapter (GitHub raw content API)
+- Cross-reference extraction enricher (BIP, BOLT, issue, Fixes/Closes)
 - All target repos configured and ingesting
 - API: `/references`, `/bip/{n}`, `/bolt/{n}`
 - MCP: `bkb_get_references`, `bkb_lookup_bip`, `bkb_lookup_bolt`
 
-### Phase 3: Bitcoin Intelligence
+**Deferred from Phase 2:** Git commit ingestion adapter (see Section 13.5).
 
-- Custom Bitcoin-aware FTS5 tokenizer
-- Concept vocabulary (seeded from Optech topics)
-- Concept tagger enricher
-- Embedding generation via `ort`
-- Semantic search endpoint
-- API: `/timeline/{concept}`
+### Phase 3: Bitcoin Intelligence -- DONE
+
+- Concept vocabulary: 35 curated concepts seeded from Optech topics
+  (`bkb-core/src/bitcoin.rs`), covering soft forks, scripting,
+  transactions, Lightning, privacy, cryptography, and P2P
+- Concept tagger enricher: word-boundary regex matching against concept
+  aliases, storing matches in `concept_mentions` table
+- API: `/timeline/{concept}`, `/find_commit`
 - MCP: `bkb_timeline`, `bkb_find_commit`
 
-### Phase 4: Polish & Local Testing
+**Deferred from Phase 3:** Custom Bitcoin-aware FTS5 tokenizer, embedding
+generation via `ort`, and semantic search endpoint (see Section 13.5).
 
-- `LocalSqliteStore` implementation (for integration tests and local
-  development; user-facing local mode is a future goal)
-- Snapshot export tooling
-- Adaptive poll intervals
-- Monitoring / health checks
+### Phase 4: Polish & Local Testing -- DONE
 
-### Future Phase: Client Sync
+- Integration tests (9 tests exercising the full pipeline: ingest →
+  enrich → store → query, covering cross-source scenarios)
+- Enhanced `/health` endpoint with document counts by source type
+- Per-source CLI testing via `--ingest-only` flag
+- Change log compaction (`compact_change_log`)
+- Adaptive poll intervals (implemented in job queue from Phase 1)
 
-> Out of scope for the initial implementation. Tracked here for reference.
+### 13.5 Deferred Items
+
+The following items were deferred from their original phases. They are
+documented here with rationale for deferral and guidance for future
+implementation.
+
+#### Git Commit Adapter
+
+**Original phase:** Phase 2. **Reason for deferral:** Different ingestion
+pattern from the other adapters. Instead of HTTP API calls, this requires
+local git operations: clone/fetch management (deciding where to store
+repos on disk), commit walking with diff parsing via `git2` (libgit2
+bindings), and associating commits with PRs by matching commit SHAs in
+PR merge events. The `find_commit` MCP tool currently falls back to
+searching PRs by keyword, which covers the most common use case.
+
+**Implementation sketch:** Add a `GitCommitSyncSource` that maintains a
+local bare clone (or shallow clone) of each tracked repo. On each
+`fetch_page`, run `git fetch`, then `git log --after={cursor}` to walk
+new commits. Each commit becomes a `Document` with `source_type=commit`,
+`source_id=SHA`, `title=first line of message`, `body=full message`,
+`author=author name`. The cursor is the SHA of the last processed commit.
+Associated PR lookup can use the existing `refs` table (GitHub adapter
+already extracts "Fixes #N" from PR bodies, and commit messages often
+reference PRs).
+
+#### Custom Bitcoin-Aware FTS5 Tokenizer
+
+**Original phase:** Phase 3. **Reason for deferral:** Implementing a
+custom FTS5 tokenizer requires the FTS5 tokenizer C API via `rusqlite`'s
+unsafe FFI bindings. This is not a Rust trait -- it's a C callback
+interface with raw pointers (`fts5_tokenizer` struct, `xTokenize`
+callback). Doable but fiddly and error-prone. The standard `unicode61`
+tokenizer works well enough for most queries, and the concept tagger
+compensates for matching gaps (e.g., finding documents about "taproot"
+even when they only mention "BIP-341").
+
+**Implementation sketch:** Register a custom tokenizer via
+`rusqlite::vtab` that wraps `unicode61` and adds:
+- Keep hyphenated identifiers as single tokens: `BIP-340`, `BIP-341`
+- Keep underscore-joined identifiers: `OP_CHECKSIG`, `OP_CAT`
+- Split CamelCase into additional tokens: `ChannelManager` → `channel`,
+  `manager`
+- Index known synonyms: `HTLC` → `hash time locked contract`
+
+#### Embedding Generation and Semantic Search
+
+**Original phase:** Phase 3. **Reason for deferral:** Heaviest
+dependency footprint of any feature. The `ort` crate requires ONNX
+Runtime native libraries (~100 MB download). The `bge-base-en-v1.5`
+model is ~400 MB. The `sqlite-vec` extension for vector similarity
+search in SQLite needs additional build configuration. Initial embedding
+of ~2M chunks would take 15--30 minutes even with batched inference.
+This is the single most impactful remaining feature (fuzzy concept
+matching vs. exact keyword matching), but it was deferred to keep the
+initial build lean and fast.
+
+**Implementation sketch:**
+1. Add `ort` and `sqlite-vec` dependencies.
+2. Download `bge-base-en-v1.5` ONNX model on first run (or bundle).
+3. Implement text chunking (split long documents into ~512-token chunks,
+   store in `embedding_chunks` table).
+4. Implement `EmbeddingGenerator` enricher: for each chunk, run
+   inference → store 768-dim vector in `vec_documents`.
+5. Modify `/search` to accept `semantic=true`: run the query through the
+   same embedding model, then combine FTS5 BM25 scores with cosine
+   similarity scores from `sqlite-vec`.
+
+#### Client Sync Protocol
+
+**Original phase:** Future. **Reason for deferral:** Protocol design
+question requiring careful consideration of compaction policy, cursor
+management, conflict resolution for local DB mode, and bandwidth
+optimization. The `change_log` table and `seq` field exist from day one
+for internal use, but exposing them as a client-facing API requires
+defining a stable sync contract.
 
 - `/changes` API endpoint (Section 8.7)
 - `get_changes()` method on `KnowledgeStore` trait
