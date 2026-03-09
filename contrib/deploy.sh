@@ -18,22 +18,24 @@ fi
 echo "==> Binary size: $(du -h "$BINARY" | cut -f1)"
 
 # === Deploy ===
-echo "==> Uploading binary..."
-scp "$BINARY" "${VPS_HOST}:/opt/bkb/bkb-server.new"
-
-echo "==> Setting up VPS..."
-ssh "$VPS_HOST" bash -s "$GITHUB_TOKEN" <<'REMOTE'
+echo "==> Preparing VPS..."
+ssh "$VPS_HOST" bash <<'SETUP'
 set -euo pipefail
-GITHUB_TOKEN="$1"
-
-# Create user and directories (first run only)
 if ! id bkb &>/dev/null; then
     useradd --system --no-create-home --shell /usr/sbin/nologin bkb
     echo "Created bkb user"
 fi
-
 mkdir -p /opt/bkb/data
 chown -R bkb:bkb /opt/bkb
+SETUP
+
+echo "==> Uploading binary..."
+scp "$BINARY" "${VPS_HOST}:/opt/bkb/bkb-server.new"
+
+echo "==> Installing..."
+ssh "$VPS_HOST" bash -s "$GITHUB_TOKEN" <<'REMOTE'
+set -euo pipefail
+GITHUB_TOKEN="$1"
 
 # Swap binary
 mv /opt/bkb/bkb-server.new /opt/bkb/bkb-server
