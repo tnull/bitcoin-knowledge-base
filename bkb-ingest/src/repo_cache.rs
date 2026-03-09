@@ -223,7 +223,23 @@ impl RepoCache {
 		builder.bare(true);
 		builder.fetch_options(fetch_opts);
 
-		builder.clone(&url, path).with_context(|| format!("failed to clone {}/{}", owner, repo))?;
+		builder.clone(&url, path).map_err(|e| {
+			tracing::error!(
+				repo = %format!("{}/{}", owner, repo),
+				error_class = e.class() as i32,
+				error_code = e.code() as i32,
+				error_message = %e.message(),
+				"git2 clone failed"
+			);
+			anyhow::anyhow!(
+				"failed to clone {}/{}: {} (class={}, code={})",
+				owner,
+				repo,
+				e.message(),
+				e.class() as i32,
+				e.code() as i32
+			)
+		})?;
 
 		Ok(())
 	}
