@@ -272,7 +272,7 @@ impl Metrics {
 	}
 
 	/// Render a lightweight HTML admin dashboard.
-	pub fn render_dashboard_html(&self, doc_stats: &[(String, i64)]) -> String {
+	pub fn render_dashboard_html(&self, doc_stats: &[(String, i64)], git_hash: &str) -> String {
 		let total_docs: i64 = doc_stats.iter().map(|(_, c)| c).sum();
 		let db_size = self.db_size_bytes();
 		let (cache_used, cache_max, cache_ratio) = self.cache_size_bytes();
@@ -464,7 +464,7 @@ footer {{ margin-top: 2rem; text-align: center; font-size: 0.8rem; color: var(--
 
 {pending_section}
 
-<footer>Auto-refreshes every 30 seconds &middot; <a href="/metrics" style="color:var(--accent2)">Prometheus metrics</a></footer>
+<footer>Auto-refreshes every 30 seconds &middot; <a href="/metrics" style="color:var(--accent2)">Prometheus metrics</a> &middot; {git_hash}</footer>
 </body>
 </html>
 "##,
@@ -496,6 +496,7 @@ footer {{ margin-top: 2rem; text-align: center; font-size: 0.8rem; color: var(--
 					num_pending, pending_rows
 				)
 			},
+			git_hash = git_hash,
 		)
 	}
 }
@@ -607,12 +608,13 @@ mod tests {
 		metrics.register_job("test:b");
 		metrics.record_job_run("test:a", Duration::from_secs(1), 5, Duration::from_secs(60), None);
 		let doc_stats = vec![("bip".to_string(), 10i64)];
-		let html = metrics.render_dashboard_html(&doc_stats);
+		let html = metrics.render_dashboard_html(&doc_stats, "abc1234");
 		assert!(html.contains("BKB Admin Dashboard"));
 		assert!(html.contains("bip"));
 		assert!(html.contains("Job Progress (1 / 2)"));
 		assert!(html.contains("OK: 1"));
 		assert!(html.contains("Pending: 1"));
+		assert!(html.contains("abc1234"));
 		assert!(html.contains("Pending Jobs"));
 		assert!(html.contains("test:b"));
 	}

@@ -133,7 +133,8 @@ pub async fn dashboard_page(
 	};
 
 	let doc_stats = state.store.get_stats().await.unwrap_or_default();
-	let html = metrics.render_dashboard_html(&doc_stats);
+	let git_hash = option_env!("BKB_GIT_HASH").unwrap_or("unknown");
+	let html = metrics.render_dashboard_html(&doc_stats, git_hash);
 	(StatusCode::OK, [("www-authenticate", "")], Html(html))
 }
 
