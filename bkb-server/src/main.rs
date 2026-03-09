@@ -210,17 +210,16 @@ async fn main() -> Result<()> {
 			info!("registered mailing list sync source");
 		}
 
-		// Register BIP/BOLT spec sources
+		// Register BIP/BOLT/bLIP spec sources
 		{
-			let max_bip = if cli.dev_subset { 344 } else { 500 };
-			let bip_source = BipSyncSource::new(cli.github_token.clone(), max_bip);
+			let bip_source = BipSyncSource::new(cli.github_token.clone());
 			let bip_interval = bip_source.poll_interval();
 			queue
 				.add_job(SyncJob {
 					source_id: "specs:bips".to_string(),
 					source: Box::new(bip_source),
 					priority: Priority::Low,
-					cursor: if cli.dev_subset { Some("340".to_string()) } else { None },
+					cursor: None,
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: bip_interval,
@@ -228,7 +227,7 @@ async fn main() -> Result<()> {
 				.await;
 			info!("registered BIP sync source");
 
-			let bolt_source = BoltSyncSource::new(cli.github_token.clone(), 12);
+			let bolt_source = BoltSyncSource::new(cli.github_token.clone());
 			let bolt_interval = bolt_source.poll_interval();
 			queue
 				.add_job(SyncJob {
@@ -243,7 +242,7 @@ async fn main() -> Result<()> {
 				.await;
 			info!("registered BOLT sync source");
 
-			let blip_source = BlipSyncSource::new(cli.github_token.clone(), 100);
+			let blip_source = BlipSyncSource::new(cli.github_token.clone());
 			let blip_interval = blip_source.poll_interval();
 			queue
 				.add_job(SyncJob {
@@ -351,11 +350,11 @@ async fn run_single_source(
 	} else if spec == "mailing_list" {
 		Box::new(MailingListSyncSource::new())
 	} else if spec == "bips" {
-		Box::new(BipSyncSource::new(token, 500))
+		Box::new(BipSyncSource::new(token))
 	} else if spec == "bolts" {
-		Box::new(BoltSyncSource::new(token, 12))
+		Box::new(BoltSyncSource::new(token))
 	} else if spec == "blips" {
-		Box::new(BlipSyncSource::new(token, 50))
+		Box::new(BlipSyncSource::new(token))
 	} else if spec == "optech" {
 		Box::new(OptechNewsletterSyncSource::new(token))
 	} else {
