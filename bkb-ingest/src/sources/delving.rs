@@ -68,8 +68,15 @@ impl SyncSource for DelvingSyncSource {
 			anyhow::bail!("Delving Bitcoin API returned {}: {}", status, body);
 		}
 
+		let response_text =
+			response.text().await.context("failed to read Delving Bitcoin response")?;
 		let latest: DiscourseLatestResponse =
-			response.json().await.context("failed to parse Delving Bitcoin latest response")?;
+			serde_json::from_str(&response_text).with_context(|| {
+				format!(
+					"failed to parse Delving Bitcoin latest response (first 500 chars): {}",
+					&response_text[..response_text.len().min(500)]
+				)
+			})?;
 
 		let topics = latest.topic_list.topics;
 
@@ -139,7 +146,7 @@ impl SyncSource for DelvingSyncSource {
 
 			let topic_metadata = serde_json::json!({
 				"category_id": topic_summary.category_id,
-				"tags": topic_summary.tags,
+				"tags": topic_summary.tags.iter().map(|t| &t.name).collect::<Vec<_>>(),
 			});
 
 			documents.push(Document {
@@ -293,7 +300,12 @@ struct DiscourseTopicSummary {
 	last_posted_at: Option<DateTime<Utc>>,
 	category_id: Option<u64>,
 	#[serde(default)]
-	tags: Vec<String>,
+	tags: Vec<DiscourseTag>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DiscourseTag {
+	name: String,
 }
 
 #[derive(Debug, Deserialize)]

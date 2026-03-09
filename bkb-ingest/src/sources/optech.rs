@@ -28,7 +28,6 @@ impl OptechNewsletterSyncSource {
 	pub fn new(token: Option<String>, max_number: u32) -> Self {
 		Self { client: Client::new(), token, max_number, page_size: 10 }
 	}
-
 }
 
 #[async_trait]
