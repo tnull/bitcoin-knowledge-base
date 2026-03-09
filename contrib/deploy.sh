@@ -4,6 +4,7 @@ set -euo pipefail
 # === Configuration ===
 VPS_HOST="root@bitcoinknowledge.dev"
 GITHUB_TOKEN="${GITHUB_TOKEN:?Set GITHUB_TOKEN env var}"
+BKB_ADMIN_PASSWORD="${BKB_ADMIN_PASSWORD:-}"
 BINARY="target/release/bkb-server"
 
 # === Build ===
@@ -34,9 +35,10 @@ scp "$BINARY" "${VPS_HOST}:/opt/bkb/bkb-server.new"
 scp "contrib/bkb-server.service" "${VPS_HOST}:/etc/systemd/system/bkb-server.service"
 
 echo "==> Installing..."
-ssh "$VPS_HOST" bash -s "$GITHUB_TOKEN" <<'REMOTE'
+ssh "$VPS_HOST" bash -s "$GITHUB_TOKEN" "$BKB_ADMIN_PASSWORD" <<'REMOTE'
 set -euo pipefail
 GITHUB_TOKEN="$1"
+BKB_ADMIN_PASSWORD="$2"
 
 # Swap binary
 mv /opt/bkb/bkb-server.new /opt/bkb/bkb-server
@@ -45,6 +47,12 @@ chmod +x /opt/bkb/bkb-server
 # Update GITHUB_TOKEN in service file
 if [ -n "$GITHUB_TOKEN" ]; then
     sed -i "s/^Environment=GITHUB_TOKEN=.*/Environment=GITHUB_TOKEN=${GITHUB_TOKEN}/" \
+        /etc/systemd/system/bkb-server.service
+fi
+
+# Update BKB_ADMIN_PASSWORD in service file
+if [ -n "$BKB_ADMIN_PASSWORD" ]; then
+    sed -i "s/^Environment=BKB_ADMIN_PASSWORD=.*/Environment=BKB_ADMIN_PASSWORD=${BKB_ADMIN_PASSWORD}/" \
         /etc/systemd/system/bkb-server.service
 fi
 
