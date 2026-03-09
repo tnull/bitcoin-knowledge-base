@@ -355,12 +355,12 @@ fn bolt_slug(number: u32) -> &'static str {
 		3 => "transactions",
 		4 => "onion-routing",
 		5 => "onchain",
-		7 => "p2p",
+		7 => "routing-gossip",
 		8 => "transport",
-		9 => "feature-bits",
+		9 => "features",
 		10 => "dns-bootstrap",
 		11 => "payment-encoding",
-		12 => "offers",
+		12 => "offer-encoding",
 		_ => "unknown",
 	}
 }
@@ -473,6 +473,9 @@ mod tests {
 	fn test_bolt_slug() {
 		assert_eq!(bolt_slug(0), "introduction");
 		assert_eq!(bolt_slug(2), "peer-protocol");
+		assert_eq!(bolt_slug(7), "routing-gossip");
+		assert_eq!(bolt_slug(9), "features");
 		assert_eq!(bolt_slug(11), "payment-encoding");
+		assert_eq!(bolt_slug(12), "offer-encoding");
 	}
 }
