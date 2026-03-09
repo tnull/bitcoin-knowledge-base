@@ -243,7 +243,7 @@ async fn main() -> Result<()> {
 				.await;
 			info!("registered BOLT sync source");
 
-			let blip_source = BlipSyncSource::new(cli.github_token.clone(), 50);
+			let blip_source = BlipSyncSource::new(cli.github_token.clone(), 100);
 			let blip_interval = blip_source.poll_interval();
 			queue
 				.add_job(SyncJob {
