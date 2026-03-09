@@ -202,7 +202,7 @@ impl JobQueue {
 					);
 				}
 
-				error!(source = %source_name, error = %e, "sync job failed");
+				error!(source = %source_name, error = ?e, "sync job failed");
 
 				// Exponential backoff on failure
 				job.retry_count += 1;
