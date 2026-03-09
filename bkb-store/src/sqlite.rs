@@ -486,6 +486,22 @@ impl KnowledgeStore for SqliteStore {
 			})?
 			.collect::<rusqlite::Result<Vec<_>>>()?;
 
+		// Populate concept tags for each result
+		let mut concept_stmt =
+			conn.prepare("SELECT concept_slug FROM concept_mentions WHERE doc_id = ?1")?;
+		let results: Vec<SearchResult> = results
+			.into_iter()
+			.map(|mut r| {
+				if let Ok(concepts) = concept_stmt
+					.query_map([&r.id], |row| row.get::<_, String>(0))
+					.and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+				{
+					r.concepts = concepts;
+				}
+				r
+			})
+			.collect();
+
 		let total_count = results.len() as u32;
 		Ok(SearchResults { results, total_count })
 	}
