@@ -19,6 +19,7 @@ use bkb_ingest::sources::commits::GitCommitSyncSource;
 use bkb_ingest::sources::delving::DelvingSyncSource;
 use bkb_ingest::sources::github::{GitHubCommentSyncSource, GitHubIssueSyncSource};
 use bkb_ingest::sources::irc::IrcLogSyncSource;
+use bkb_ingest::sources::mail_archive::MailArchiveSyncSource;
 use bkb_ingest::sources::mailing_list::MailingListSyncSource;
 use bkb_ingest::sources::optech::OptechNewsletterSyncSource;
 use bkb_ingest::sources::specs::{BipSyncSource, BlipSyncSource, BoltSyncSource};
@@ -52,7 +53,7 @@ struct Cli {
 
 	/// Run a single source adapter and exit (for testing).
 	/// Format: "github:owner/repo", "irc:channel", "delving", "mailing_list",
-	/// "bips", "bolts", "blips", "optech".
+	/// "lightning_dev", "bips", "bolts", "blips", "optech".
 	#[arg(long)]
 	ingest_only: Option<String>,
 
@@ -228,7 +229,7 @@ async fn main() -> Result<()> {
 			info!("registered Delving Bitcoin sync source");
 		}
 
-		// Register mailing list source
+		// Register mailing list sources
 		{
 			let ml_source = MailingListSyncSource::new();
 			let ml_interval = ml_source.poll_interval();
@@ -243,7 +244,25 @@ async fn main() -> Result<()> {
 					base_interval: ml_interval,
 				})
 				.await;
-			info!("registered mailing list sync source");
+			info!("registered bitcoindev mailing list sync source");
+
+			let ld_source = MailArchiveSyncSource::new(
+				"lightning-dev@lists.linuxfoundation.org",
+				"lightning-dev",
+			);
+			let ld_interval = ld_source.poll_interval();
+			queue
+				.add_job(SyncJob {
+					source_id: "mail_archive:lightning-dev".to_string(),
+					source: Box::new(ld_source),
+					priority: Priority::Low,
+					cursor: None,
+					next_run: Instant::now(),
+					retry_count: 0,
+					base_interval: ld_interval,
+				})
+				.await;
+			info!("registered lightning-dev mail-archive sync source");
 		}
 
 		// Register BIP/BOLT/bLIP spec sources
@@ -335,7 +354,7 @@ async fn main() -> Result<()> {
 		}
 		info!(repos = repos.len(), "registered git commit sync sources");
 
-		// +5 for mailing list, BIPs, BOLTs, bLIPs, Optech
+		// +6 for mailing lists (bitcoindev + lightning-dev), BIPs, BOLTs, bLIPs, Optech
 		let total_sources = repos.len() * 3 // issues + comments + commits
 			+ config.irc_channels().len()
 			+ if config.sync_delving() { 1 } else { 0 }
@@ -385,6 +404,11 @@ async fn run_single_source(
 		Box::new(DelvingSyncSource::new())
 	} else if spec == "mailing_list" {
 		Box::new(MailingListSyncSource::new())
+	} else if spec == "lightning_dev" {
+		Box::new(MailArchiveSyncSource::new(
+			"lightning-dev@lists.linuxfoundation.org",
+			"lightning-dev",
+		))
 	} else if spec == "bips" {
 		Box::new(BipSyncSource::new(token))
 	} else if spec == "bolts" {
@@ -396,7 +420,7 @@ async fn run_single_source(
 	} else {
 		anyhow::bail!(
 			"unknown source: '{}'. Expected: github:owner/repo, commits:owner/repo, \
-			 irc:channel, delving, mailing_list, bips, bolts, blips, optech",
+			 irc:channel, delving, mailing_list, lightning_dev, bips, bolts, blips, optech",
 			spec
 		);
 	};

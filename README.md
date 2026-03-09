@@ -10,7 +10,7 @@ Context Protocol) server for fast, precise lookups.
 | Source | Adapter | Content |
 |---|---|---|
 | GitHub | Issues, PRs, comments | Bitcoin Core, LDK, rust-bitcoin, BDK, Payjoin, BOLTs, bLIPs |
-| Mailing Lists | bitcoin-dev | Proposals, discussions, reviews |
+| Mailing Lists | bitcoin-dev (gnusha.org), lightning-dev (mail-archive.com) | Proposals, discussions, reviews |
 | IRC Logs | gnusha.org | `#bitcoin-core-dev`, `#lightning-dev`, `#bitcoin-wizards` |
 | Delving Bitcoin | Discourse API | Technical discussion forum |
 | BIPs | Raw spec files | Bitcoin Improvement Proposals |

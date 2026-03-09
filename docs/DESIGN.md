@@ -63,8 +63,8 @@ incremental sync.
 
 | List | Archive Location | Est. Messages |
 |---|---|---|
-| bitcoin-dev | `gnusha.org/pi/bitcoindev/` (current), `lists.linuxfoundation.org/pipermail/bitcoin-dev/` (historical) | ~15,000 |
-| lightning-dev | `lists.linuxfoundation.org/pipermail/lightning-dev/` (historical, now mostly inactive) | ~5,000 |
+| bitcoin-dev | `gnusha.org/pi/bitcoindev/` (public-inbox Atom feed, current) | ~15,000 |
+| lightning-dev | `mail-archive.com/lightning-dev@lists.linuxfoundation.org/` (HTML scraping, archived 2017-2024) | ~3,525 |
 
 ### 4.3 IRC Chat Logs
 
@@ -503,7 +503,8 @@ completes in 2-4 hours automatically.
 | `GitHubReviewSyncSource` | `GET /repos/{o}/{r}/pulls/{n}/reviews` | PR number cursor |
 | `GitHubDiscussionSyncSource` | GraphQL `repository.discussions` | GraphQL cursor |
 | `GitCommitSyncSource` | `git fetch` + `git log` | Commit SHA |
-| `MailingListSyncSource` | Mbox archive scraping / download | Message-ID / date |
+| `MailingListSyncSource` | gnusha.org public-inbox Atom feed | Month + offset cursor |
+| `MailArchiveSyncSource` | mail-archive.com HTML scraping | Sequential message number |
 | `IrcLogSyncSource` | gnusha.org daily log file scraping | Date (YYYY-MM-DD) |
 | `DelvingSyncSource` | Discourse REST API (`/latest.json`, `/t/{id}.json`) | Last activity timestamp |
 | `OptechSyncSource` | `git fetch` + markdown file parsing | Commit SHA |
@@ -792,7 +793,8 @@ bitcoin-knowledge-base/
 |           |-- mod.rs           -- SyncSource trait
 |           |-- github.rs        -- Issues, comments, PRs, discussions
 |           |-- git.rs           -- Commit walker
-|           |-- mailing_list.rs  -- Mbox parser
+|           |-- mailing_list.rs  -- gnusha.org public-inbox adapter
+|           |-- mail_archive.rs  -- mail-archive.com HTML scraper
 |           |-- irc.rs           -- IRC log scraper (gnusha.org)
 |           |-- delving.rs       -- Delving Bitcoin (Discourse API)
 |           |-- optech.rs        -- Optech markdown parser

@@ -2,6 +2,7 @@ pub mod commits;
 pub mod delving;
 pub mod github;
 pub mod irc;
+pub mod mail_archive;
 pub mod mailing_list;
 pub mod optech;
 pub mod specs;
