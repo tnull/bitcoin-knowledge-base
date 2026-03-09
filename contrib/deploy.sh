@@ -5,12 +5,11 @@ set -euo pipefail
 VPS_HOST="root@bitcoinknowledge.dev"   # or root@<IP> before DNS is set
 VPS_SSH_KEY="~/.ssh/id_ed25519"        # adjust to your key
 GITHUB_TOKEN=""                        # fill in your token
-BINARY="target/x86_64-unknown-linux-gnu/release/bkb-server"
+BINARY="target/release/bkb-server"
 
 # === Build ===
-echo "==> Cross-compiling bkb-server..."
-# Requires: cargo install cargo-zigbuild && rustup target add x86_64-unknown-linux-gnu
-cargo zigbuild --release --target x86_64-unknown-linux-gnu -p bkb-server
+echo "==> Building bkb-server..."
+cargo build --release -p bkb-server
 
 if [ ! -f "$BINARY" ]; then
     echo "ERROR: Binary not found at $BINARY"
