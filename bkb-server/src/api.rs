@@ -191,6 +191,20 @@ async fn find_commit(
 	}
 }
 
-async fn health() -> impl IntoResponse {
-	Json(serde_json::json!({ "status": "ok" }))
+async fn health(State(store): State<AppState>) -> impl IntoResponse {
+	let stats = store.get_stats().await.unwrap_or_default();
+	let total: i64 = stats.iter().map(|(_, c)| c).sum();
+	let by_type: serde_json::Value = stats
+		.into_iter()
+		.map(|(t, c)| (t, serde_json::Value::from(c)))
+		.collect::<serde_json::Map<String, serde_json::Value>>()
+		.into();
+
+	Json(serde_json::json!({
+		"status": "ok",
+		"documents": {
+			"total": total,
+			"by_type": by_type,
+		}
+	}))
 }

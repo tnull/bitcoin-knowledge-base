@@ -170,6 +170,61 @@ impl SqliteStore {
 		Ok(())
 	}
 
+	/// Get document counts grouped by source type.
+	pub async fn get_stats(&self) -> Result<Vec<(String, i64)>> {
+		let conn = self.conn.lock().await;
+		let mut stmt = conn.prepare(
+			"SELECT source_type, COUNT(*) FROM documents GROUP BY source_type ORDER BY COUNT(*) DESC",
+		)?;
+		let stats = stmt
+			.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?
+			.collect::<rusqlite::Result<Vec<_>>>()?;
+		Ok(stats)
+	}
+
+	/// Get all sync states.
+	pub async fn get_all_sync_states(&self) -> Result<Vec<SyncState>> {
+		let conn = self.conn.lock().await;
+		let mut stmt = conn.prepare(
+			"SELECT source_id, source_type, source_repo, last_cursor,
+				last_synced_at, next_run_at, status, error_message,
+				retry_count, items_found
+			 FROM sync_state ORDER BY source_id",
+		)?;
+		let states = stmt
+			.query_map([], |row| {
+				Ok(SyncState {
+					source_id: row.get(0)?,
+					source_type: row.get(1)?,
+					source_repo: row.get(2)?,
+					last_cursor: row.get(3)?,
+					last_synced_at: row
+						.get::<_, Option<String>>(4)?
+						.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+						.map(|dt| dt.with_timezone(&chrono::Utc)),
+					next_run_at: row
+						.get::<_, Option<String>>(5)?
+						.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+						.map(|dt| dt.with_timezone(&chrono::Utc)),
+					status: SyncStatus::from_str(row.get::<_, String>(6)?.as_str()),
+					error_message: row.get(7)?,
+					retry_count: row.get(8)?,
+					items_found: row.get(9)?,
+				})
+			})?
+			.collect::<rusqlite::Result<Vec<_>>>()?;
+		Ok(states)
+	}
+
+	/// Compact the change log by deleting entries older than the given duration.
+	pub async fn compact_change_log(&self, max_age: std::time::Duration) -> Result<u64> {
+		let conn = self.conn.lock().await;
+		let cutoff = chrono::Utc::now() - chrono::Duration::from_std(max_age)?;
+		let deleted =
+			conn.execute("DELETE FROM change_log WHERE changed_at < ?1", [cutoff.to_rfc3339()])?;
+		Ok(deleted as u64)
+	}
+
 	/// Get or create sync state for a source.
 	pub async fn get_sync_state(&self, source_id: &str) -> Result<Option<SyncState>> {
 		let conn = self.conn.lock().await;

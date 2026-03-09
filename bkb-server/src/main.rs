@@ -43,6 +43,16 @@ struct Cli {
 	/// Skip ingestion and only run the HTTP API server.
 	#[arg(long)]
 	no_ingest: bool,
+
+	/// Run a single source adapter and exit (for testing).
+	/// Format: "github:owner/repo", "irc:channel", "delving", "mailing_list",
+	/// "bips", "bolts", "optech".
+	#[arg(long)]
+	ingest_only: Option<String>,
+
+	/// Maximum number of pages to fetch when using --ingest-only.
+	#[arg(long, default_value = "1")]
+	limit_pages: u32,
 }
 
 #[tokio::main]
@@ -62,6 +72,11 @@ async fn main() -> Result<()> {
 
 	let store = Arc::new(SqliteStore::open(std::path::Path::new(&cli.db))?);
 	info!("database opened");
+
+	// Single-source ingest mode
+	if let Some(ref source_spec) = cli.ingest_only {
+		return run_single_source(source_spec, &cli, &store).await;
+	}
 
 	// Start HTTP API server
 	let api_store = Arc::clone(&store);
@@ -243,6 +258,88 @@ async fn main() -> Result<()> {
 	} else {
 		info!("ingestion disabled (--no-ingest)");
 		api_handle.await?;
+	}
+
+	Ok(())
+}
+
+/// Run a single source adapter for a limited number of pages, then exit.
+async fn run_single_source(spec: &str, cli: &Cli, store: &Arc<SqliteStore>) -> Result<()> {
+	let rate_limiter = Arc::new(RateLimiter::new(200));
+	let token = cli.github_token.clone();
+
+	let source: Box<dyn SyncSource> = if let Some(rest) = spec.strip_prefix("github:") {
+		let parts: Vec<&str> = rest.splitn(2, '/').collect();
+		if parts.len() != 2 {
+			anyhow::bail!("invalid github spec, expected 'github:owner/repo'");
+		}
+		Box::new(GitHubIssueSyncSource::new(parts[0], parts[1], token))
+	} else if let Some(channel) = spec.strip_prefix("irc:") {
+		Box::new(IrcLogSyncSource::new(channel))
+	} else if spec == "delving" {
+		Box::new(DelvingSyncSource::new())
+	} else if spec == "mailing_list" {
+		Box::new(MailingListSyncSource::new())
+	} else if spec == "bips" {
+		Box::new(BipSyncSource::new(token, 500))
+	} else if spec == "bolts" {
+		Box::new(BoltSyncSource::new(token, 12))
+	} else if spec == "optech" {
+		Box::new(OptechNewsletterSyncSource::new(token, 400))
+	} else {
+		anyhow::bail!(
+			"unknown source: '{}'. Expected: github:owner/repo, irc:channel, delving, \
+			 mailing_list, bips, bolts, optech",
+			spec
+		);
+	};
+
+	info!(source = spec, limit_pages = cli.limit_pages, "running single source ingest");
+
+	let mut cursor: Option<String> = None;
+	let mut total_docs = 0u32;
+
+	for page in 0..cli.limit_pages {
+		let result = source.fetch_page(cursor.as_deref(), &rate_limiter).await?;
+		let doc_count = result.documents.len();
+		total_docs += doc_count as u32;
+
+		for doc in &result.documents {
+			store.upsert_document(doc).await?;
+
+			if let Some(ref body) = doc.body {
+				let output =
+					bkb_ingest::enrichment::enrich(&doc.id, body, doc.source_repo.as_deref());
+				store.delete_refs_from(&doc.id).await?;
+				for reference in &output.references {
+					store.insert_reference(reference).await?;
+				}
+				store.delete_concept_mentions(&doc.id).await?;
+				for (slug, confidence) in &output.concept_tags {
+					store.upsert_concept_mention(&doc.id, slug, *confidence).await?;
+				}
+			}
+		}
+
+		for reference in &result.references {
+			store.insert_reference(reference).await?;
+		}
+
+		info!(page = page + 1, documents = doc_count, "ingested page");
+
+		cursor = result.next_cursor;
+		if cursor.is_none() {
+			info!("source exhausted");
+			break;
+		}
+	}
+
+	info!(total_documents = total_docs, "single source ingest complete");
+
+	// Print stats
+	let stats = store.get_stats().await?;
+	for (source_type, count) in &stats {
+		info!(source_type, count, "document count");
 	}
 
 	Ok(())
