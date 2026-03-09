@@ -238,7 +238,7 @@ async fn main() -> Result<()> {
 
 		// Register Optech newsletter source
 		{
-			let optech_source = OptechNewsletterSyncSource::new(cli.github_token.clone(), 400);
+			let optech_source = OptechNewsletterSyncSource::new(cli.github_token.clone());
 			let optech_interval = optech_source.poll_interval();
 			queue
 				.add_job(SyncJob {
@@ -303,7 +303,7 @@ async fn run_single_source(spec: &str, cli: &Cli, store: &Arc<SqliteStore>) -> R
 	} else if spec == "blips" {
 		Box::new(BlipSyncSource::new(token, 50))
 	} else if spec == "optech" {
-		Box::new(OptechNewsletterSyncSource::new(token, 400))
+		Box::new(OptechNewsletterSyncSource::new(token))
 	} else {
 		anyhow::bail!(
 			"unknown source: '{}'. Expected: github:owner/repo, irc:channel, delving, \

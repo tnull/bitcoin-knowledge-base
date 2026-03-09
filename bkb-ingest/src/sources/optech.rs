@@ -18,15 +18,11 @@ use crate::rate_limiter::RateLimiter;
 pub struct OptechNewsletterSyncSource {
 	client: Client,
 	token: Option<String>,
-	/// Maximum newsletter number to check.
-	max_number: u32,
-	/// Newsletters per page.
-	page_size: u32,
 }
 
 impl OptechNewsletterSyncSource {
-	pub fn new(token: Option<String>, max_number: u32) -> Self {
-		Self { client: Client::new(), token, max_number, page_size: 10 }
+	pub fn new(token: Option<String>) -> Self {
+		Self { client: Client::new(), token }
 	}
 }
 
