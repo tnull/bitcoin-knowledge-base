@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# === Configuration ===
+VPS_HOST="root@bitcoinknowledge.dev"   # or root@<IP> before DNS is set
+VPS_SSH_KEY="~/.ssh/id_ed25519"        # adjust to your key
+GITHUB_TOKEN=""                        # fill in your token
+BINARY="target/x86_64-unknown-linux-gnu/release/bkb-server"
+
+# === Build ===
+echo "==> Cross-compiling bkb-server..."
+# Requires: cargo install cargo-zigbuild && rustup target add x86_64-unknown-linux-gnu
+cargo zigbuild --release --target x86_64-unknown-linux-gnu -p bkb-server
+
+if [ ! -f "$BINARY" ]; then
+    echo "ERROR: Binary not found at $BINARY"
+    exit 1
+fi
+
+echo "==> Binary size: $(du -h "$BINARY" | cut -f1)"
+
+# === Deploy ===
+echo "==> Uploading binary..."
+scp -i "$VPS_SSH_KEY" "$BINARY" "${VPS_HOST}:/opt/bkb/bkb-server.new"
+
+echo "==> Setting up VPS..."
+ssh -i "$VPS_SSH_KEY" "$VPS_HOST" bash -s "$GITHUB_TOKEN" <<'REMOTE'
+set -euo pipefail
+GITHUB_TOKEN="$1"
+
+# Create user and directories (first run only)
+if ! id bkb &>/dev/null; then
+    useradd --system --no-create-home --shell /usr/sbin/nologin bkb
+    echo "Created bkb user"
+fi
+
+mkdir -p /opt/bkb/data
+chown -R bkb:bkb /opt/bkb
+
+# Swap binary
+mv /opt/bkb/bkb-server.new /opt/bkb/bkb-server
+chmod +x /opt/bkb/bkb-server
+
+# Update GITHUB_TOKEN in service file
+if [ -n "$GITHUB_TOKEN" ]; then
+    sed -i "s/^Environment=GITHUB_TOKEN=.*/Environment=GITHUB_TOKEN=${GITHUB_TOKEN}/" \
+        /etc/systemd/system/bkb-server.service
+fi
+
+# Reload and restart
+systemctl daemon-reload
+systemctl restart bkb-server
+systemctl status --no-pager bkb-server
+
+echo "==> bkb-server deployed and running"
+REMOTE
+
+echo "==> Done. Check: https://bitcoinknowledge.dev/health"
