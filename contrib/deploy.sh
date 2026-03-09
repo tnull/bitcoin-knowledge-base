@@ -9,6 +9,7 @@ BINARY="target/release/bkb-server"
 
 # === Build ===
 echo "==> Building bkb-server..."
+export BKB_GIT_HASH="$(git rev-parse --short HEAD)"
 cargo build --release -p bkb-server
 
 if [ ! -f "$BINARY" ]; then

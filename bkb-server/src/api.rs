@@ -246,6 +246,8 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
 
 	Json(serde_json::json!({
 		"status": "ok",
+		"version": env!("CARGO_PKG_VERSION"),
+		"git_hash": option_env!("BKB_GIT_HASH").unwrap_or("unknown"),
 		"documents": {
 			"total": total,
 			"by_type": by_type,

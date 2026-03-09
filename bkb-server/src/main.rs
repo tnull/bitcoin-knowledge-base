@@ -96,7 +96,14 @@ async fn main() -> Result<()> {
 	let cli = Cli::parse();
 	let config = Config::new(cli.dev_subset);
 
-	info!(db = %cli.db, bind = %cli.bind, dev_subset = cli.dev_subset, "starting BKB server");
+	info!(
+		db = %cli.db,
+		bind = %cli.bind,
+		dev_subset = cli.dev_subset,
+		version = env!("CARGO_PKG_VERSION"),
+		git_hash = option_env!("BKB_GIT_HASH").unwrap_or("unknown"),
+		"starting BKB server"
+	);
 
 	let store = Arc::new(SqliteStore::open(std::path::Path::new(&cli.db))?);
 	info!("database opened");
