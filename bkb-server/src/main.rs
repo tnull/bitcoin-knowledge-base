@@ -72,7 +72,7 @@ struct Cli {
 	#[arg(long, default_value = "4096")]
 	max_repo_size_mb: u64,
 
-	/// Password for /metrics and /admin/dashboard endpoints (HTTP Basic Auth).
+	/// Password for /metrics and /dashboard endpoints (HTTP Basic Auth).
 	/// If unset, these routes are not registered.
 	#[arg(long, env = "BKB_ADMIN_PASSWORD")]
 	admin_password: Option<String>,

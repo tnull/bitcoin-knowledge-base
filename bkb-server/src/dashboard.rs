@@ -113,7 +113,7 @@ pub async fn metrics_endpoint(
 	(StatusCode::OK, [("content-type", "text/plain; version=0.0.4; charset=utf-8")], body)
 }
 
-/// `GET /admin/dashboard` -- lightweight HTML admin dashboard.
+/// `GET /dashboard` -- lightweight HTML admin dashboard.
 pub async fn dashboard_page(
 	State(state): State<AppState>, headers: HeaderMap,
 ) -> impl IntoResponse {

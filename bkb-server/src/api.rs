@@ -57,7 +57,7 @@ pub async fn serve(state: AppState, addr: SocketAddr) -> Result<()> {
 	if state.admin_password.is_some() {
 		app = app
 			.route("/metrics", get(dashboard::metrics_endpoint))
-			.route("/admin/dashboard", get(dashboard::dashboard_page));
+			.route("/dashboard", get(dashboard::dashboard_page));
 	}
 
 	let app = app
