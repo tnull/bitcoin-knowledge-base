@@ -9,12 +9,13 @@ Context Protocol) server for fast, precise lookups.
 
 | Source | Adapter | Content |
 |---|---|---|
-| GitHub | Issues, PRs, comments | Bitcoin Core, LDK, rust-bitcoin, BDK, Payjoin, BOLTs |
+| GitHub | Issues, PRs, comments | Bitcoin Core, LDK, rust-bitcoin, BDK, Payjoin, BOLTs, bLIPs |
 | Mailing Lists | bitcoin-dev | Proposals, discussions, reviews |
 | IRC Logs | gnusha.org | `#bitcoin-core-dev`, `#lightning-dev`, `#bitcoin-wizards` |
 | Delving Bitcoin | Discourse API | Technical discussion forum |
 | BIPs | Raw spec files | Bitcoin Improvement Proposals |
 | BOLTs | Raw spec files | Lightning Network specifications |
+| bLIPs | Raw spec files | Bitcoin Lightning Improvement Proposals |
 | Bitcoin Optech | Newsletters | Weekly summaries and topic coverage |
 
 ## Architecture
@@ -28,7 +29,7 @@ bkb-mcp       MCP server (JSON-RPC 2.0 over stdio) for AI agent access
 ```
 
 All content is normalized into a single `documents` table with FTS5 full-text
-search. Cross-references (BIP/BOLT mentions, issue links, `Fixes`/`Closes`
+search. Cross-references (BIP/BOLT/bLIP mentions, issue links, `Fixes`/`Closes`
 patterns) are extracted during ingestion. Documents are tagged with Bitcoin
 concepts (taproot, HTLCs, covenants, etc.) from a curated 35-concept vocabulary.
 
@@ -56,6 +57,7 @@ The HTTP API is available at `http://127.0.0.1:3000` by default.
 | `GET /references/{entity}` | All documents referencing an entity (e.g., `BIP-340`) |
 | `GET /bip/{number}` | BIP spec with all incoming references across the knowledge base |
 | `GET /bolt/{number}` | BOLT spec with all incoming references |
+| `GET /blip/{number}` | bLIP spec with all incoming references |
 | `GET /timeline/{concept}` | Chronological events for a concept across all sources |
 | `GET /find_commit?q=...` | Find commits/PRs matching a description |
 | `GET /health` | Server status with document counts by source type |
@@ -69,6 +71,7 @@ The MCP server (`bkb-mcp`) exposes the following tools for AI agents:
 - `bkb_get_references` -- Find cross-references to an entity
 - `bkb_lookup_bip` -- Comprehensive BIP context
 - `bkb_lookup_bolt` -- Comprehensive BOLT context
+- `bkb_lookup_blip` -- Comprehensive bLIP context
 - `bkb_timeline` -- Concept timeline across sources
 - `bkb_find_commit` -- Find commits with associated PR context
 
@@ -76,7 +79,7 @@ The MCP server (`bkb-mcp`) exposes the following tools for AI agents:
 
 ```bash
 cargo check --workspace    # Type-check all crates
-cargo test --workspace     # Run all 72 tests
+cargo test --workspace     # Run all 76 tests
 cargo fmt --all            # Format (uses hard tabs, 100-char width)
 ```
 

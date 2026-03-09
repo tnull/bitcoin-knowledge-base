@@ -284,6 +284,8 @@ pub fn extract_issue_refs(text: &str, from_doc_id: &str, source_repo: &str) -> V
 		static RE_BIP: Regex = Regex::new(r"(?i)\bBIP[- ]?(\d{1,4})\b").unwrap();
 		// BOLT-11, BOLT 11, bolt11
 		static RE_BOLT: Regex = Regex::new(r"(?i)\bBOLT[- ]?(\d{1,2})\b").unwrap();
+		// bLIP-1, bLIP 1, blip-1, blip1
+		static RE_BLIP: Regex = Regex::new(r"(?i)\bbLIP[- ]?(\d{1,4})\b").unwrap();
 		// Fixes #1234, Closes #1234
 		static RE_FIXES: Regex = Regex::new(r"(?i)(?:fix(?:es|ed)?|clos(?:es|ed)?|resolv(?:es|ed)?)\s+#(\d+)").unwrap();
 	}
@@ -361,6 +363,20 @@ pub fn extract_issue_refs(text: &str, from_doc_id: &str, source_repo: &str) -> V
 				to_doc_id: None,
 				ref_type: RefType::ReferencesBolt,
 				to_external: Some(format!("BOLT-{}", &cap[1])),
+				context: Some(cap[0].to_string()),
+			});
+		}
+	});
+
+	// bLIP references
+	RE_BLIP.with(|re| {
+		for cap in re.captures_iter(text) {
+			refs.push(Reference {
+				id: None,
+				from_doc_id: from_doc_id.to_string(),
+				to_doc_id: None,
+				ref_type: RefType::ReferencesBlip,
+				to_external: Some(format!("bLIP-{}", &cap[1])),
 				context: Some(cap[0].to_string()),
 			});
 		}
@@ -445,6 +461,20 @@ mod tests {
 	fn test_extract_fixes_ref() {
 		let refs = extract_issue_refs("Fixes #5678", "doc:1", "bitcoin/bitcoin");
 		assert!(refs.iter().any(|r| r.ref_type == RefType::Fixes));
+	}
+
+	#[test]
+	fn test_extract_blip_ref() {
+		let refs = extract_issue_refs(
+			"See bLIP-1 for keysend and blip 2 for hosted channels",
+			"doc:1",
+			"lightningdevkit/rust-lightning",
+		);
+		let blip_refs: Vec<_> =
+			refs.iter().filter(|r| r.ref_type == RefType::ReferencesBlip).collect();
+		assert_eq!(blip_refs.len(), 2);
+		assert!(blip_refs.iter().any(|r| r.to_external.as_deref() == Some("bLIP-1")));
+		assert!(blip_refs.iter().any(|r| r.to_external.as_deref() == Some("bLIP-2")));
 	}
 
 	#[test]

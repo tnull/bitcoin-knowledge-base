@@ -34,6 +34,7 @@ impl Config {
 				// Specs
 				("bitcoin".to_string(), "bips".to_string()),
 				("lightning".to_string(), "bolts".to_string()),
+				("lightning".to_string(), "blips".to_string()),
 				// Optech
 				("bitcoinops".to_string(), "bitcoinops.github.io".to_string()),
 			]

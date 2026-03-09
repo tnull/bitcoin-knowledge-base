@@ -32,6 +32,10 @@ pub trait KnowledgeStore: Send + Sync {
 	/// refs.
 	async fn lookup_bolt(&self, number: u32) -> Result<Option<DocumentContext>>;
 
+	/// Get comprehensive context for a bLIP: spec text, all referencing documents, and incoming
+	/// refs.
+	async fn lookup_blip(&self, number: u32) -> Result<Option<DocumentContext>>;
+
 	/// Chronological timeline of a concept across all sources.
 	async fn timeline(
 		&self, concept: &str, after: Option<DateTime<Utc>>, before: Option<DateTime<Utc>>,

@@ -15,7 +15,7 @@ use bkb_ingest::sources::github::{GitHubCommentSyncSource, GitHubIssueSyncSource
 use bkb_ingest::sources::irc::IrcLogSyncSource;
 use bkb_ingest::sources::mailing_list::MailingListSyncSource;
 use bkb_ingest::sources::optech::OptechNewsletterSyncSource;
-use bkb_ingest::sources::specs::{BipSyncSource, BoltSyncSource};
+use bkb_ingest::sources::specs::{BipSyncSource, BlipSyncSource, BoltSyncSource};
 use bkb_ingest::sources::SyncSource;
 use bkb_store::sqlite::SqliteStore;
 
@@ -46,7 +46,7 @@ struct Cli {
 
 	/// Run a single source adapter and exit (for testing).
 	/// Format: "github:owner/repo", "irc:channel", "delving", "mailing_list",
-	/// "bips", "bolts", "optech".
+	/// "bips", "bolts", "blips", "optech".
 	#[arg(long)]
 	ingest_only: Option<String>,
 
@@ -218,6 +218,21 @@ async fn main() -> Result<()> {
 				})
 				.await;
 			info!("registered BOLT sync source");
+
+			let blip_source = BlipSyncSource::new(cli.github_token.clone(), 50);
+			let blip_interval = blip_source.poll_interval();
+			queue
+				.add_job(SyncJob {
+					source_id: "specs:blips".to_string(),
+					source: Box::new(blip_source),
+					priority: Priority::Low,
+					cursor: None,
+					next_run: Instant::now(),
+					retry_count: 0,
+					base_interval: blip_interval,
+				})
+				.await;
+			info!("registered bLIP sync source");
 		}
 
 		// Register Optech newsletter source
@@ -238,11 +253,11 @@ async fn main() -> Result<()> {
 			info!("registered Optech newsletter sync source");
 		}
 
-		// +4 for mailing list, BIPs, BOLTs, Optech
+		// +5 for mailing list, BIPs, BOLTs, bLIPs, Optech
 		let total_sources = repos.len() * 2
 			+ config.irc_channels().len()
 			+ if config.sync_delving() { 1 } else { 0 }
-			+ 4;
+			+ 5;
 		info!(sources = total_sources, "ingestion scheduler starting");
 
 		let queue_handle = tokio::spawn(async move {
@@ -284,12 +299,14 @@ async fn run_single_source(spec: &str, cli: &Cli, store: &Arc<SqliteStore>) -> R
 		Box::new(BipSyncSource::new(token, 500))
 	} else if spec == "bolts" {
 		Box::new(BoltSyncSource::new(token, 12))
+	} else if spec == "blips" {
+		Box::new(BlipSyncSource::new(token, 50))
 	} else if spec == "optech" {
 		Box::new(OptechNewsletterSyncSource::new(token, 400))
 	} else {
 		anyhow::bail!(
 			"unknown source: '{}'. Expected: github:owner/repo, irc:channel, delving, \
-			 mailing_list, bips, bolts, optech",
+			 mailing_list, bips, bolts, blips, optech",
 			spec
 		);
 	};

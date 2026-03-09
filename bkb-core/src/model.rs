@@ -21,6 +21,7 @@ pub enum SourceType {
 	DelvingPost,
 	Bip,
 	Bolt,
+	Blip,
 	OptechNewsletter,
 	OptechTopic,
 	OptechBlog,
@@ -43,6 +44,7 @@ impl SourceType {
 			Self::DelvingPost => "delving_post",
 			Self::Bip => "bip",
 			Self::Bolt => "bolt",
+			Self::Blip => "blip",
 			Self::OptechNewsletter => "optech_newsletter",
 			Self::OptechTopic => "optech_topic",
 			Self::OptechBlog => "optech_blog",
@@ -65,6 +67,7 @@ impl SourceType {
 			"delving_post" => Some(Self::DelvingPost),
 			"bip" => Some(Self::Bip),
 			"bolt" => Some(Self::Bolt),
+			"blip" => Some(Self::Blip),
 			"optech_newsletter" => Some(Self::OptechNewsletter),
 			"optech_topic" => Some(Self::OptechTopic),
 			"optech_blog" => Some(Self::OptechBlog),
@@ -141,6 +144,10 @@ impl Document {
 				"https://github.com/lightning/bolts/blob/master/{}.md",
 				self.source_id
 			)),
+			SourceType::Blip => Some(format!(
+				"https://github.com/lightning/blips/blob/master/blip-{}.md",
+				self.source_id
+			)),
 			SourceType::DelvingTopic => {
 				Some(format!("https://delvingbitcoin.org/t/{}", self.source_id))
 			},
@@ -179,6 +186,7 @@ pub enum RefType {
 	ReferencesCommit,
 	ReferencesBip,
 	ReferencesBolt,
+	ReferencesBlip,
 	RepliesTo,
 }
 
@@ -191,6 +199,7 @@ impl RefType {
 			Self::ReferencesCommit => "references_commit",
 			Self::ReferencesBip => "references_bip",
 			Self::ReferencesBolt => "references_bolt",
+			Self::ReferencesBlip => "references_blip",
 			Self::RepliesTo => "replies_to",
 		}
 	}
@@ -203,6 +212,7 @@ impl RefType {
 			"references_commit" => Some(Self::ReferencesCommit),
 			"references_bip" => Some(Self::ReferencesBip),
 			"references_bolt" => Some(Self::ReferencesBolt),
+			"references_blip" => Some(Self::ReferencesBlip),
 			"replies_to" => Some(Self::RepliesTo),
 			_ => None,
 		}

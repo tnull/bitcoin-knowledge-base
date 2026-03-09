@@ -373,6 +373,7 @@ impl SqliteStore {
 		let prefix = match source_type {
 			SourceType::Bip => "BIP",
 			SourceType::Bolt => "BOLT",
+			SourceType::Blip => "bLIP",
 			_ => unreachable!(),
 		};
 		let external_pattern = format!("{}-{}", prefix, number);
@@ -713,6 +714,10 @@ impl KnowledgeStore for SqliteStore {
 
 	async fn lookup_bolt(&self, number: u32) -> Result<Option<DocumentContext>> {
 		self.lookup_spec(SourceType::Bolt, number).await
+	}
+
+	async fn lookup_blip(&self, number: u32) -> Result<Option<DocumentContext>> {
+		self.lookup_spec(SourceType::Blip, number).await
 	}
 
 	async fn timeline(

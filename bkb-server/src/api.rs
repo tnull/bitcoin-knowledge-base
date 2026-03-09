@@ -25,6 +25,7 @@ pub async fn serve(store: AppState, addr: SocketAddr) -> Result<()> {
 		.route("/references/{entity}", get(get_references))
 		.route("/bip/{number}", get(get_bip))
 		.route("/bolt/{number}", get(get_bolt))
+		.route("/blip/{number}", get(get_blip))
 		.route("/timeline/{concept}", get(get_timeline))
 		.route("/find_commit", get(find_commit))
 		.route("/health", get(health))
@@ -140,6 +141,16 @@ async fn get_bolt(State(store): State<AppState>, Path(number): Path<u32>) -> imp
 	match store.lookup_bolt(number).await {
 		Ok(Some(ctx)) => (StatusCode::OK, Json(serde_json::to_value(ctx).unwrap())),
 		Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "BOLT not found" }))),
+		Err(e) => {
+			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
+		},
+	}
+}
+
+async fn get_blip(State(store): State<AppState>, Path(number): Path<u32>) -> impl IntoResponse {
+	match store.lookup_blip(number).await {
+		Ok(Some(ctx)) => (StatusCode::OK, Json(serde_json::to_value(ctx).unwrap())),
+		Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "bLIP not found" }))),
 		Err(e) => {
 			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
 		},

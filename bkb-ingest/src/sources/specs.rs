@@ -243,6 +243,109 @@ impl SyncSource for BoltSyncSource {
 	}
 }
 
+/// Sync source for bLIP (Bitcoin Lightning Improvement Proposal) documents.
+pub struct BlipSyncSource {
+	client: Client,
+	token: Option<String>,
+	/// Maximum bLIP number to check.
+	max_blip: u32,
+}
+
+impl BlipSyncSource {
+	pub fn new(token: Option<String>, max_blip: u32) -> Self {
+		Self { client: Client::new(), token, max_blip }
+	}
+
+	async fn fetch_blip(
+		&self, number: u32, rate_limiter: &RateLimiter,
+	) -> Result<Option<Document>> {
+		rate_limiter.acquire().await;
+
+		let padded = format!("{:04}", number);
+		let url =
+			format!("https://raw.githubusercontent.com/lightning/blips/master/blip-{}.md", padded);
+
+		let mut req = self.client.get(&url).header("User-Agent", "bkb/0.1");
+
+		if let Some(ref token) = self.token {
+			req = req.header("Authorization", format!("Bearer {}", token));
+		}
+
+		let response = req.send().await?;
+		rate_limiter.update_from_response(response.headers());
+
+		if response.status() == reqwest::StatusCode::NOT_FOUND {
+			return Ok(None);
+		}
+
+		if !response.status().is_success() {
+			return Ok(None);
+		}
+
+		let body = response.text().await?;
+		if body.is_empty() {
+			return Ok(None);
+		}
+
+		let title = extract_blip_title(&body, number);
+		let source_id = number.to_string();
+		let id = Document::make_id(&SourceType::Blip, None, &source_id);
+
+		Ok(Some(Document {
+			id,
+			source_type: SourceType::Blip,
+			source_repo: None,
+			source_id,
+			title: Some(title),
+			body: Some(body),
+			author: None,
+			author_id: None,
+			created_at: Utc::now(),
+			updated_at: Some(Utc::now()),
+			parent_id: None,
+			metadata: None,
+			seq: None,
+		}))
+	}
+}
+
+#[async_trait]
+impl SyncSource for BlipSyncSource {
+	async fn fetch_page(
+		&self, cursor: Option<&str>, rate_limiter: &RateLimiter,
+	) -> Result<SyncPage> {
+		let start: u32 = cursor.and_then(|c| c.parse().ok()).unwrap_or(1);
+
+		let mut documents = Vec::new();
+
+		for num in start..=self.max_blip {
+			match self.fetch_blip(num, rate_limiter).await {
+				Ok(Some(doc)) => {
+					debug!(blip = num, "fetched bLIP");
+					documents.push(doc);
+				},
+				Ok(None) => {
+					debug!(blip = num, "bLIP not found, skipping");
+				},
+				Err(e) => {
+					warn!(blip = num, error = %e, "failed to fetch bLIP");
+				},
+			}
+		}
+
+		info!(count = documents.len(), "fetched all bLIPs");
+		Ok(SyncPage { documents, references: Vec::new(), next_cursor: None })
+	}
+
+	fn poll_interval(&self) -> Duration {
+		Duration::from_secs(86400)
+	}
+
+	fn name(&self) -> &str {
+		"specs:blips"
+	}
+}
+
 /// Map BOLT number to its file slug.
 fn bolt_slug(number: u32) -> &'static str {
 	match number {
@@ -301,6 +404,27 @@ fn extract_bolt_title(body: &str, number: u32) -> String {
 	format!("BOLT-{}", number)
 }
 
+/// Extract title from a bLIP document body.
+fn extract_blip_title(body: &str, number: u32) -> String {
+	// bLIPs use markdown with a "Title:" field or a `#` heading
+	for line in body.lines().take(30) {
+		let trimmed = line.trim();
+		if let Some(rest) = trimmed.strip_prefix("Title:") {
+			let title = rest.trim();
+			if !title.is_empty() {
+				return format!("bLIP-{}: {}", number, title);
+			}
+		}
+		if trimmed.starts_with('#') && !trimmed.starts_with("##") {
+			let title = trimmed.trim_start_matches('#').trim();
+			if !title.is_empty() {
+				return format!("bLIP-{}: {}", number, title);
+			}
+		}
+	}
+	format!("bLIP-{}", number)
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -325,6 +449,24 @@ mod tests {
 	fn test_extract_bolt_title() {
 		let body = "# BOLT #2: Peer Protocol for Channel Management\n\nSome content here.";
 		assert_eq!(extract_bolt_title(body, 2), "BOLT #2: Peer Protocol for Channel Management");
+	}
+
+	#[test]
+	fn test_extract_blip_title_heading() {
+		let body = "# bLIP 1: Key Send\n\nSome content here.";
+		assert_eq!(extract_blip_title(body, 1), "bLIP-1: bLIP 1: Key Send");
+	}
+
+	#[test]
+	fn test_extract_blip_title_field() {
+		let body = "```\n  bLIP: 2\n  Title: Hosted Channels\n  Author: Anton\n```";
+		assert_eq!(extract_blip_title(body, 2), "bLIP-2: Hosted Channels");
+	}
+
+	#[test]
+	fn test_extract_blip_title_fallback() {
+		let body = "Some body without a title";
+		assert_eq!(extract_blip_title(body, 99), "bLIP-99");
 	}
 
 	#[test]
