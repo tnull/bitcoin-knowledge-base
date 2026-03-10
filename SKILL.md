@@ -1,8 +1,8 @@
 # Bitcoin Knowledge Base (BKB) -- MCP Skill
 
 Search across the Bitcoin and Lightning development ecosystem: BIPs,
-BOLTs, bLIPs, GitHub issues/PRs, mailing lists, IRC logs, Delving
-Bitcoin, and Optech newsletters.
+BOLTs, bLIPs, GitHub issues/PRs/commits, mailing lists, IRC logs,
+Delving Bitcoin, and Optech newsletters.
 
 ## Setup
 

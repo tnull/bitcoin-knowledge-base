@@ -4,8 +4,8 @@
 
 BKB is a Bitcoin-ecosystem-specific knowledge base that ingests, indexes, and
 serves structured data from multiple sources: GitHub repositories (code, issues,
-PRs, discussions), mailing lists, IRC chat logs, forum posts, specification
-documents (BIPs/BOLTs), and Bitcoin Optech content.
+PRs, discussions, commits), mailing lists, IRC chat logs, forum posts,
+specification documents (BIPs/BOLTs/bLIPs), and Bitcoin Optech content.
 
 It is designed to be queried by AI agents via an MCP (Model Context Protocol)
 server for fast, precise lookups. A hosted API serves as the single source of
@@ -51,12 +51,16 @@ incremental sync.
 | Source | Repositories | Est. Issues/PRs |
 |---|---|---|
 | Bitcoin Core | `bitcoin/bitcoin` | ~32,900 |
-| LDK | `lightningdevkit/rust-lightning`, `ldk-node`, `ldk-sample`, `ldk-server`, `ldk-c-bindings`, `ldk-garbagecollected`, `lightningdevkit.org` | ~4,400 |
-| rust-bitcoin | `rust-bitcoin/rust-bitcoin`, `rust-secp256k1`, `rust-bech32`, `rust-miniscript`, `rust-bitcoinconsensus`, `hex-conservative` | ~5,500 |
-| BDK | `bitcoindevkit/bdk`, `bdk_wallet`, `bdk-ffi`, `bdk-python`, `bdk-kyoto`, `bdk-jvm`, `bdk-bitcoind-client`, `bdk-wasm`, `bitcoindevkit.org` | ~2,500 |
-| Payjoin | `payjoin/rust-payjoin`, `payjoin.org`, `payjoindevkit.org`, `btsim`, `tx-indexer`, `research-docs`, `multiparty-protocol-docs` | ~500 |
+| LDK | `lightningdevkit/rust-lightning`, `ldk-node`, `ldk-sample`, `ldk-server`, `ldk-c-bindings`, `ldk-garbagecollected`, `vss-server`, `vss-client`, `rapid-gossip-sync-server`, `ldk-swift`, `ldk-review-club`, `orange-sdk` | ~4,400 |
+| LND | `lightningnetwork/lnd` | ~7,000 |
+| Core Lightning | `ElementsProject/lightning` | ~6,500 |
+| Eclair | `ACINQ/eclair` | ~2,500 |
+| rust-bitcoin | `rust-bitcoin/rust-bitcoin`, `rust-secp256k1`, `rust-bech32`, `rust-bech32-bitcoin`, `rust-miniscript`, `rust-bitcoinconsensus`, `hex-conservative`, `rust-psbt`, `rust-psbt-v0`, `corepc`, `bip322`, `bip324`, `bitcoin-payment-instructions`, `rust-bip39`, `bitcoind`, `constants` | ~5,500 |
+| BDK | `bitcoindevkit/bdk`, `bdk_wallet`, `bdk-ffi`, `bdk-cli`, `bdk-python`, `bdk-kyoto`, `bdk-jvm`, `bdk-swift`, `bdk-dart`, `bdk-rn`, `bdk-tx`, `bdk-sp`, `bdk-reserves`, `bdk-sqlite`, `bdk-sqlx`, `bdk-bitcoind-client`, `coin-select`, `rust-esplora-client`, `rust-electrum-client`, `bitcoin-ffi`, `rust-cktap`, `electrum_streaming_client`, `devkit-wallet` | ~2,500 |
+| Payjoin | `payjoin/rust-payjoin`, `nolooking`, `btsim`, `cja`, `cja-2`, `multiparty-protocol-docs`, `bitcoin-hpke`, `tx-indexer`, `receive-payjoin-v2`, `batch-plot` | ~500 |
 | BIPs | `bitcoin/bips` | ~400 specs |
 | BOLTs | `lightning/bolts` | ~1,200 issues/PRs |
+| bLIPs | `lightning/blips` | ~50 specs |
 | Bitcoin Optech | `bitcoinops/bitcoinops.github.io` | ~400 newsletters, ~150 topics |
 
 ### 4.2 Mailing Lists
@@ -242,6 +246,7 @@ URL for each document is derived at query time from `source_type`,
 | `delving_post` | Delving Bitcoin reply | Post ID |
 | `bip` | Bitcoin Improvement Proposal | BIP number |
 | `bolt` | BOLT specification | BOLT number |
+| `blip` | Bitcoin Lightning Improvement Proposal | bLIP number |
 | `optech_newsletter` | Optech newsletter | Newsletter number |
 | `optech_topic` | Optech topic page | Topic slug |
 | `optech_blog` | Optech blog post | Post slug |
@@ -317,6 +322,7 @@ Cross-references are extracted during ingestion by regex-based pattern matching:
 | `bitcoin/bitcoin#6789` | `mentions_issue` (cross-repo) |
 | `BIP-340`, `BIP 340`, `bip340` | `references_bip` |
 | `BOLT-11`, `BOLT 11`, `bolt11` | `references_bolt` |
+| `bLIP-NN`, `blip-NN`, `bLIP NN` | `references_blip` |
 | 7+ hex char sequences in commit context | `references_commit` |
 | `Fixes #1234`, `Closes #1234` | `fixes` |
 
@@ -599,7 +605,11 @@ list posts across all tracked repos, and the Optech summary if available.
 
 Same as above for BOLTs.
 
-### 8.6 `GET /timeline/{concept}`
+### 8.6 `GET /blip/{number}`
+
+Same as above for bLIPs.
+
+### 8.7 `GET /timeline/{concept}`
 
 Chronological timeline of a concept across all sources:
 
@@ -631,12 +641,12 @@ Chronological timeline of a concept across all sources:
 }
 ```
 
-**Note on `bkb_find_commit`:** The MCP tool `bkb_find_commit` (Section 9)
+**Note on `bkb_find_commit`:** The MCP tool `bkb_find_commit` (Section 10)
 does not have a dedicated HTTP endpoint. It is implemented as a specialized
 `/search` query with `source_type=commit` and additional post-processing to
 include associated PR and discussion context.
 
-### 8.7 `GET /changes` *(Deferred -- Future Phase)*
+### 8.8 `GET /changes` *(Deferred -- Future Phase)*
 
 > **Not implemented in Phases 1--4.** Documented here for future reference.
 > The `change_log` table exists from day one for internal use, but this
@@ -671,7 +681,7 @@ Incremental change feed for client sync.
 [
   {
     "name": "bkb_search",
-    "description": "Search the Bitcoin knowledge base across all sources (code, issues, PRs, mailing lists, IRC logs, Delving Bitcoin, BIPs, BOLTs, Optech). Returns matching documents with snippets.",
+    "description": "Search the Bitcoin knowledge base across all sources (code, issues, PRs, commits, mailing lists, IRC logs, Delving Bitcoin, BIPs, BOLTs, bLIPs, Optech). Returns matching documents with snippets.",
     "parameters": {
       "query": "string, required -- search query",
       "source_type": "string, optional -- filter by type",
@@ -714,6 +724,13 @@ Incremental change feed for client sync.
     }
   },
   {
+    "name": "bkb_lookup_blip",
+    "description": "Get comprehensive context for a bLIP: spec text and all referencing documents.",
+    "parameters": {
+      "number": "integer, required -- bLIP number"
+    }
+  },
+  {
     "name": "bkb_timeline",
     "description": "Chronological timeline of a concept across all sources: mailing list proposals, BIPs, implementation PRs, Optech coverage.",
     "parameters": {
@@ -745,6 +762,7 @@ pub trait KnowledgeStore: Send + Sync {
     ) -> Result<Vec<Reference>>;
     async fn lookup_bip(&self, number: u32) -> Result<BipContext>;
     async fn lookup_bolt(&self, number: u32) -> Result<BoltContext>;
+    async fn lookup_blip(&self, number: u32) -> Result<BlipContext>;
     async fn timeline(
         &self, concept: &str, after: Option<DateTime>, before: Option<DateTime>,
     ) -> Result<Vec<TimelineEvent>>;
@@ -792,13 +810,13 @@ bitcoin-knowledge-base/
 |       `-- sources/
 |           |-- mod.rs           -- SyncSource trait
 |           |-- github.rs        -- Issues, comments, PRs, discussions
-|           |-- git.rs           -- Commit walker
+|           |-- commits.rs       -- Git commit walker (bare clone + revwalk)
 |           |-- mailing_list.rs  -- gnusha.org public-inbox adapter
 |           |-- mail_archive.rs  -- mail-archive.com HTML scraper
 |           |-- irc.rs           -- IRC log scraper (gnusha.org)
 |           |-- delving.rs       -- Delving Bitcoin (Discourse API)
 |           |-- optech.rs        -- Optech markdown parser
-|           `-- specs.rs         -- BIP/BOLT parser
+|           `-- specs.rs         -- BIP/BOLT/bLIP parser
 |
 |-- bkb-store/                   (storage backends)
 |   |-- Cargo.toml
@@ -860,11 +878,11 @@ bitcoin-knowledge-base/
 - IRC log adapter (gnusha.org daily log scraping)
 - Delving Bitcoin adapter (Discourse REST API)
 - Optech newsletter adapter (GitHub contents API)
-- BIP/BOLT spec adapter (GitHub raw content API)
-- Cross-reference extraction enricher (BIP, BOLT, issue, Fixes/Closes)
+- BIP/BOLT/bLIP spec adapter (GitHub raw content API)
+- Cross-reference extraction enricher (BIP, BOLT, bLIP, issue, Fixes/Closes)
 - All target repos configured and ingesting
-- API: `/references`, `/bip/{n}`, `/bolt/{n}`
-- MCP: `bkb_get_references`, `bkb_lookup_bip`, `bkb_lookup_bolt`
+- API: `/references`, `/bip/{n}`, `/bolt/{n}`, `/blip/{n}`
+- MCP: `bkb_get_references`, `bkb_lookup_bip`, `bkb_lookup_bolt`, `bkb_lookup_blip`
 
 - Git commit adapter (`GitCommitSyncSource`) via `git2` (libgit2) bare clones
   with LRU cache management (`RepoCache`), incremental sync via `revwalk.hide()`,

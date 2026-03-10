@@ -9,7 +9,7 @@ Context Protocol) server for fast, precise lookups.
 
 | Source | Adapter | Content |
 |---|---|---|
-| GitHub | Issues, PRs, comments | Bitcoin Core, LDK, rust-bitcoin, BDK, Payjoin, BOLTs, bLIPs |
+| GitHub | Issues, PRs, comments, commits | Bitcoin Core, LDK, LND, Core Lightning, Eclair, rust-bitcoin, BDK, Payjoin, BOLTs, bLIPs |
 | Mailing Lists | bitcoin-dev (gnusha.org), lightning-dev (mail-archive.com) | Proposals, discussions, reviews |
 | IRC Logs | gnusha.org | `#bitcoin-core-dev`, `#lightning-dev`, `#bitcoin-wizards` |
 | Delving Bitcoin | Discourse API | Technical discussion forum |
@@ -79,7 +79,7 @@ The MCP server (`bkb-mcp`) exposes the following tools for AI agents:
 
 ```bash
 cargo check --workspace    # Type-check all crates
-cargo test --workspace     # Run all 76 tests
+cargo test --workspace     # Run all 130 tests
 cargo fmt --all            # Format (uses hard tabs, 100-char width)
 ```
 
