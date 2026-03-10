@@ -4,7 +4,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
-use bkb_core::model::{SearchParams, SourceType};
+use bkb_core::model::{parse_datetime, SearchParams, SourceType};
 use bkb_core::store::KnowledgeStore;
 
 /// Run the MCP server over stdio (JSON-RPC 2.0).
@@ -170,16 +170,8 @@ async fn tool_search(store: &impl KnowledgeStore, args: &serde_json::Value) -> R
 		source_type,
 		source_repo,
 		author: args.get("author").and_then(|v| v.as_str()).map(|s| s.to_string()),
-		after: args
-			.get("after")
-			.and_then(|v| v.as_str())
-			.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-			.map(|dt| dt.with_timezone(&chrono::Utc)),
-		before: args
-			.get("before")
-			.and_then(|v| v.as_str())
-			.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-			.map(|dt| dt.with_timezone(&chrono::Utc)),
+		after: args.get("after").and_then(|v| v.as_str()).and_then(parse_datetime),
+		before: args.get("before").and_then(|v| v.as_str()).and_then(parse_datetime),
 		semantic: args.get("semantic").and_then(|v| v.as_bool()).unwrap_or(false),
 		limit,
 	};

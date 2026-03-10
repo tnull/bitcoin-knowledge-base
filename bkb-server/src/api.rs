@@ -12,7 +12,7 @@ use serde::Deserialize;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
-use bkb_core::model::{SearchParams, SourceType};
+use bkb_core::model::{parse_datetime, SearchParams, SourceType};
 use bkb_core::store::KnowledgeStore;
 use bkb_ingest::metrics::Metrics;
 use bkb_store::sqlite::SqliteStore;
@@ -97,17 +97,9 @@ async fn search(
 		.as_ref()
 		.map(|s| s.split(',').map(|r| r.trim().to_string()).collect::<Vec<_>>());
 
-	let after = query
-		.after
-		.as_ref()
-		.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-		.map(|dt| dt.with_timezone(&chrono::Utc));
+	let after = query.after.as_ref().and_then(|s| parse_datetime(s));
 
-	let before = query
-		.before
-		.as_ref()
-		.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-		.map(|dt| dt.with_timezone(&chrono::Utc));
+	let before = query.before.as_ref().and_then(|s| parse_datetime(s));
 
 	let params = SearchParams {
 		query: query.q,

@@ -1,7 +1,24 @@
 use std::fmt;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
+
+/// Parse a date/datetime string flexibly, accepting both full RFC 3339
+/// timestamps (e.g., `2023-01-01T00:00:00Z`) and plain ISO 8601 dates
+/// (e.g., `2023-01-01`).
+pub fn parse_datetime(s: &str) -> Option<DateTime<Utc>> {
+	// Try full RFC 3339 first.
+	if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+		return Some(dt.with_timezone(&Utc));
+	}
+
+	// Fall back to plain YYYY-MM-DD date, interpreting as midnight UTC.
+	if let Ok(date) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+		return date.and_hms_opt(0, 0, 0).map(|naive| naive.and_utc());
+	}
+
+	None
+}
 
 /// The type of source a document originated from.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -435,5 +452,51 @@ mod tests {
 	fn test_blip_url() {
 		let doc = make_doc(SourceType::Blip, None, "1");
 		assert_eq!(doc.url().unwrap(), "https://github.com/lightning/blips/blob/master/blip-1.md");
+	}
+
+	#[test]
+	fn test_parse_datetime_rfc3339() {
+		let dt = parse_datetime("2023-06-01T00:00:00Z").unwrap();
+		assert_eq!(
+			dt,
+			chrono::NaiveDate::from_ymd_opt(2023, 6, 1)
+				.unwrap()
+				.and_hms_opt(0, 0, 0)
+				.unwrap()
+				.and_utc()
+		);
+	}
+
+	#[test]
+	fn test_parse_datetime_rfc3339_with_offset() {
+		let dt = parse_datetime("2023-06-01T12:00:00+02:00").unwrap();
+		assert_eq!(
+			dt,
+			chrono::NaiveDate::from_ymd_opt(2023, 6, 1)
+				.unwrap()
+				.and_hms_opt(10, 0, 0)
+				.unwrap()
+				.and_utc()
+		);
+	}
+
+	#[test]
+	fn test_parse_datetime_plain_date() {
+		let dt = parse_datetime("2023-06-01").unwrap();
+		assert_eq!(
+			dt,
+			chrono::NaiveDate::from_ymd_opt(2023, 6, 1)
+				.unwrap()
+				.and_hms_opt(0, 0, 0)
+				.unwrap()
+				.and_utc()
+		);
+	}
+
+	#[test]
+	fn test_parse_datetime_invalid() {
+		assert!(parse_datetime("not-a-date").is_none());
+		assert!(parse_datetime("2023/06/01").is_none());
+		assert!(parse_datetime("").is_none());
 	}
 }
