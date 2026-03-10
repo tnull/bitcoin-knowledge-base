@@ -4,10 +4,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
+use chrono::Utc;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
+use bkb_core::model::{SyncState, SyncStatus};
 use bkb_store::sqlite::SqliteStore;
 
 use crate::enrichment;
@@ -74,7 +76,30 @@ impl JobQueue {
 	}
 
 	/// Add a sync job to the queue.
-	pub async fn add_job(&self, job: SyncJob) {
+	///
+	/// If the job has no cursor, attempts to load the last persisted cursor
+	/// from `sync_state` so that incremental sync resumes where it left off.
+	pub async fn add_job(&self, mut job: SyncJob) {
+		if job.cursor.is_none() {
+			match self.store.get_sync_state(&job.source_id).await {
+				Ok(Some(state)) if state.last_cursor.is_some() => {
+					debug!(
+						source = %job.source_id,
+						cursor = ?state.last_cursor,
+						"restored persisted cursor from sync_state"
+					);
+					job.cursor = state.last_cursor;
+				},
+				Ok(_) => {},
+				Err(e) => {
+					warn!(
+						source = %job.source_id,
+						error = %e,
+						"failed to load sync_state, starting from scratch"
+					);
+				},
+			}
+		}
 		if let Some(ref metrics) = self.metrics {
 			metrics.register_job(&job.source_id);
 		}
@@ -170,14 +195,18 @@ impl JobQueue {
 					job.next_run = Instant::now();
 					job.retry_count = 0;
 				} else {
-					// Caught up -- apply adaptive scheduling
+					// Caught up -- persist cursor to sync_state so we resume
+					// from here on restart / next cycle
+					self.persist_cursor(&job.source_id, job.cursor.as_deref(), doc_count).await;
+
+					// Apply adaptive scheduling
 					let interval = adaptive_interval(job.base_interval, doc_count);
-					job.cursor = None; // Will use saved cursor from sync_state on next cycle
 					job.next_run = Instant::now() + interval;
 					job.retry_count = 0;
 
 					info!(
 						source = %source_name,
+						cursor = ?job.cursor,
 						next_in_secs = interval.as_secs(),
 						"sync cycle complete, scheduling next run"
 					);
@@ -226,6 +255,30 @@ impl JobQueue {
 		}
 
 		self.jobs.lock().await.push(job);
+	}
+
+	/// Persist the current cursor to `sync_state` so it survives restarts.
+	async fn persist_cursor(&self, source_id: &str, cursor: Option<&str>, items_found: usize) {
+		let state = SyncState {
+			source_id: source_id.to_string(),
+			source_type: source_id.split(':').next().unwrap_or("unknown").to_string(),
+			source_repo: None,
+			last_cursor: cursor.map(String::from),
+			last_synced_at: Some(Utc::now()),
+			next_run_at: None,
+			status: SyncStatus::Ok,
+			error_message: None,
+			retry_count: 0,
+			items_found: items_found as i32,
+		};
+
+		if let Err(e) = self.store.update_sync_state(&state).await {
+			warn!(
+				source = %source_id,
+				error = %e,
+				"failed to persist sync cursor"
+			);
+		}
 	}
 }
 
