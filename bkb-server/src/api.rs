@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -22,12 +24,20 @@ use crate::examples;
 use crate::landing;
 use crate::sources;
 
+/// Progress tracker for a running re-enrich job.
+pub struct ReenrichProgress {
+	pub total: AtomicU64,
+	pub done: AtomicU64,
+}
+
 /// Shared application state for all handlers.
 #[derive(Clone)]
 pub struct AppState {
 	pub store: Arc<SqliteStore>,
 	pub metrics: Option<Arc<Metrics>>,
 	pub admin_password: Option<String>,
+	/// Active re-enrich jobs, keyed by source_type.
+	pub reenrich_jobs: Arc<tokio::sync::Mutex<HashMap<String, Arc<ReenrichProgress>>>>,
 }
 
 /// Middleware that increments the request counter.
@@ -65,7 +75,8 @@ pub async fn serve(state: AppState, addr: SocketAddr) -> Result<()> {
 			.route("/metrics", get(dashboard::metrics_endpoint))
 			.route("/dashboard", get(dashboard::dashboard_page))
 			.route("/admin/reset/{source_type}", post(admin_reset_source_type))
-			.route("/admin/reenrich/{source_type}", post(admin_reenrich_source_type));
+			.route("/admin/reenrich/{source_type}", post(admin_reenrich_source_type))
+			.route("/admin/reenrich/{source_type}/status", get(admin_reenrich_status));
 	}
 
 	let app = app
@@ -348,6 +359,28 @@ async fn admin_reenrich_source_type(
 		);
 	}
 
+	// Check if a re-enrich job is already running for this source type.
+	{
+		let jobs = state.reenrich_jobs.lock().await;
+		if let Some(progress) = jobs.get(&source_type) {
+			let total = progress.total.load(Ordering::Relaxed);
+			let done = progress.done.load(Ordering::Relaxed);
+			if done < total {
+				return (
+					StatusCode::CONFLICT,
+					[("www-authenticate", "")],
+					Json(serde_json::json!({
+						"status": "already_running",
+						"source_type": source_type,
+						"documents_total": total,
+						"documents_done": done,
+					})),
+				);
+			}
+		}
+	}
+
+	// Count documents to process up front.
 	let docs = match state.store.docs_for_reenrich(&source_type).await {
 		Ok(d) => d,
 		Err(e) => {
@@ -359,48 +392,105 @@ async fn admin_reenrich_source_type(
 		},
 	};
 
-	let total = docs.len();
-	let mut enriched = 0u64;
+	let total = docs.len() as u64;
+	let progress =
+		Arc::new(ReenrichProgress { total: AtomicU64::new(total), done: AtomicU64::new(0) });
 
-	for (doc_id, body, source_repo) in &docs {
-		if let Some(body) = body {
-			let output = bkb_ingest::enrichment::enrich(doc_id, body, source_repo.as_deref());
-
-			if let Err(e) = state.store.delete_refs_from(doc_id).await {
-				tracing::warn!(doc_id, error = %e, "failed to delete refs during re-enrich");
-				continue;
-			}
-			for reference in &output.references {
-				if let Err(e) = state.store.insert_reference(reference).await {
-					tracing::warn!(doc_id, error = %e, "failed to insert ref during re-enrich");
-				}
-			}
-
-			if let Err(e) = state.store.delete_concept_mentions(doc_id).await {
-				tracing::warn!(doc_id, error = %e, "failed to delete concepts during re-enrich");
-				continue;
-			}
-			for (slug, confidence) in &output.concept_tags {
-				if let Err(e) = state.store.upsert_concept_mention(doc_id, slug, *confidence).await
-				{
-					tracing::warn!(doc_id, slug, error = %e, "failed to upsert concept during re-enrich");
-				}
-			}
-
-			enriched += 1;
-		}
+	// Register the job.
+	{
+		let mut jobs = state.reenrich_jobs.lock().await;
+		jobs.insert(source_type.clone(), Arc::clone(&progress));
 	}
 
-	tracing::info!(source_type = %source_type, total, enriched, "re-enriched source type");
+	// Spawn background task.
+	let store = Arc::clone(&state.store);
+	let jobs_map = Arc::clone(&state.reenrich_jobs);
+	let st = source_type.clone();
+	tokio::spawn(async move {
+		let mut enriched = 0u64;
+		for (doc_id, body, source_repo) in &docs {
+			if let Some(body) = body {
+				let output = bkb_ingest::enrichment::enrich(doc_id, body, source_repo.as_deref());
+
+				if let Err(e) = store.delete_refs_from(doc_id).await {
+					tracing::warn!(doc_id, error = %e, "failed to delete refs during re-enrich");
+					progress.done.fetch_add(1, Ordering::Relaxed);
+					continue;
+				}
+				for reference in &output.references {
+					if let Err(e) = store.insert_reference(reference).await {
+						tracing::warn!(doc_id, error = %e, "failed to insert ref during re-enrich");
+					}
+				}
+
+				if let Err(e) = store.delete_concept_mentions(doc_id).await {
+					tracing::warn!(doc_id, error = %e, "failed to delete concepts during re-enrich");
+					progress.done.fetch_add(1, Ordering::Relaxed);
+					continue;
+				}
+				for (slug, confidence) in &output.concept_tags {
+					if let Err(e) = store.upsert_concept_mention(doc_id, slug, *confidence).await {
+						tracing::warn!(doc_id, slug, error = %e, "failed to upsert concept during re-enrich");
+					}
+				}
+
+				enriched += 1;
+			}
+			progress.done.fetch_add(1, Ordering::Relaxed);
+		}
+
+		tracing::info!(source_type = %st, total, enriched, "re-enrich complete");
+
+		// Clean up the job entry after a short delay so the dashboard can
+		// pick up the final state on its next auto-refresh.
+		tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+		jobs_map.lock().await.remove(&st);
+	});
+
 	(
-		StatusCode::OK,
+		StatusCode::ACCEPTED,
 		[("www-authenticate", "")],
 		Json(serde_json::json!({
+			"status": "started",
 			"source_type": source_type,
 			"documents_total": total,
-			"documents_enriched": enriched,
 		})),
 	)
+}
+
+async fn admin_reenrich_status(
+	State(state): State<AppState>, headers: axum::http::HeaderMap, Path(source_type): Path<String>,
+) -> impl IntoResponse {
+	if let Err(status) = dashboard::check_admin_auth(&state, &headers) {
+		return (
+			status,
+			[("www-authenticate", "Basic realm=\"BKB Admin\"")],
+			Json(serde_json::json!({ "error": "unauthorized" })),
+		);
+	}
+
+	let jobs = state.reenrich_jobs.lock().await;
+	if let Some(progress) = jobs.get(&source_type) {
+		let total = progress.total.load(Ordering::Relaxed);
+		let done = progress.done.load(Ordering::Relaxed);
+		let status = if done >= total { "complete" } else { "running" };
+		(
+			StatusCode::OK,
+			[("www-authenticate", "")],
+			Json(serde_json::json!({
+				"status": status,
+				"source_type": source_type,
+				"documents_total": total,
+				"documents_done": done,
+			})),
+		)
+	} else {
+		(
+			StatusCode::NOT_FOUND,
+			[("www-authenticate", "")],
+			Json(serde_json::json!({ "status": "idle", "source_type": source_type })),
+		)
+	}
 }
 
 async fn health(State(state): State<AppState>) -> impl IntoResponse {

@@ -166,6 +166,9 @@ mod tests {
 			),
 			metrics: None,
 			admin_password: None,
+			reenrich_jobs: std::sync::Arc::new(tokio::sync::Mutex::new(
+				std::collections::HashMap::new(),
+			)),
 		};
 		let headers = HeaderMap::new();
 		assert_eq!(check_admin_auth(&state, &headers), Err(StatusCode::NOT_FOUND));
@@ -179,6 +182,9 @@ mod tests {
 			),
 			metrics: None,
 			admin_password: Some("test123".to_string()),
+			reenrich_jobs: std::sync::Arc::new(tokio::sync::Mutex::new(
+				std::collections::HashMap::new(),
+			)),
 		};
 		let headers = HeaderMap::new();
 		assert_eq!(check_admin_auth(&state, &headers), Err(StatusCode::UNAUTHORIZED));
@@ -192,6 +198,9 @@ mod tests {
 			),
 			metrics: None,
 			admin_password: Some("test123".to_string()),
+			reenrich_jobs: std::sync::Arc::new(tokio::sync::Mutex::new(
+				std::collections::HashMap::new(),
+			)),
 		};
 		let mut headers = HeaderMap::new();
 		// ":test123" -> base64 "OnRlc3QxMjM="
@@ -207,6 +216,9 @@ mod tests {
 			),
 			metrics: None,
 			admin_password: Some("test123".to_string()),
+			reenrich_jobs: std::sync::Arc::new(tokio::sync::Mutex::new(
+				std::collections::HashMap::new(),
+			)),
 		};
 		let mut headers = HeaderMap::new();
 		// ":wrong" -> base64 "Ondyb25n"

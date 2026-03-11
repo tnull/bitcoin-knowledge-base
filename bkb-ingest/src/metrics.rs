@@ -502,15 +502,30 @@ footer {{ margin-top: 2rem; text-align: center; font-size: 0.8rem; color: var(--
 <script>
 async function reenrichSource(sourceType) {{
 	if (!confirm('Re-run enrichment (refs + concept tags) on all ' + sourceType + ' documents?')) return;
+	const btn = event.target;
 	try {{
 		const r = await fetch('/admin/reenrich/' + sourceType, {{ method: 'POST' }});
 		const d = await r.json();
-		if (r.ok) {{
-			alert('Re-enriched ' + d.documents_enriched + ' / ' + d.documents_total + ' ' + sourceType + ' documents.');
-			location.reload();
-		}} else {{
-			alert('Error: ' + (d.error || r.statusText));
+		if (r.status === 409) {{
+			btn.textContent = d.documents_done + '/' + d.documents_total;
+			return;
 		}}
+		if (!r.ok) {{ alert('Error: ' + (d.error || r.statusText)); return; }}
+		btn.disabled = true;
+		btn.textContent = '0/' + d.documents_total;
+		const poll = setInterval(async () => {{
+			try {{
+				const s = await fetch('/admin/reenrich/' + sourceType + '/status');
+				const p = await s.json();
+				btn.textContent = p.documents_done + '/' + p.documents_total;
+				if (p.status === 'complete' || p.status === 'idle') {{
+					clearInterval(poll);
+					btn.textContent = 'Re-enrich';
+					btn.disabled = false;
+					location.reload();
+				}}
+			}} catch(e) {{}}
+		}}, 2000);
 	}} catch(e) {{
 		alert('Request failed: ' + e.message);
 	}}

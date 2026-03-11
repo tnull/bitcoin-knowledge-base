@@ -143,6 +143,7 @@ async fn main() -> Result<()> {
 		store: Arc::clone(&store),
 		metrics: metrics.clone(),
 		admin_password: cli.admin_password.clone(),
+		reenrich_jobs: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
 	};
 
 	// Start HTTP API server
