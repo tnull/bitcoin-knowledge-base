@@ -114,4 +114,21 @@ impl Config {
 	pub fn sync_delving(&self) -> bool {
 		true
 	}
+
+	/// Whether to sync BitcoinTalk.
+	pub fn sync_bitcointalk(&self) -> bool {
+		true
+	}
+
+	/// Starting topic ID for BitcoinTalk sync.
+	///
+	/// In dev_subset mode, starts from a known good topic with few posts.
+	/// In full mode, starts from topic 1 (the earliest).
+	pub fn bitcointalk_start_topic(&self) -> u64 {
+		if self.dev_subset {
+			5 // One of the earliest Bitcoin threads
+		} else {
+			1
+		}
+	}
 }

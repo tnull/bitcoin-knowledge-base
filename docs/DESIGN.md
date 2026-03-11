@@ -81,6 +81,7 @@ incremental sync.
 | Source | API | Est. Items |
 |---|---|---|
 | Delving Bitcoin | Discourse REST API (`delvingbitcoin.org`) | ~484 topics, ~6,832 posts |
+| BitcoinTalk | HTML scraping (SMF 2.0, `bitcointalk.org`) | Technical boards: Bitcoin Discussion (1), Dev & Technical (6), Technical Support (4), Project Development (12), Mining (14 + children), Economics (7) |
 
 ### 4.5 Total Data Estimates
 
@@ -91,10 +92,11 @@ incremental sync.
 | Issues + PRs + comments | ~750 MB |
 | Mailing list archives | ~200 MB |
 | IRC chat logs | ~200-500 MB |
+| BitcoinTalk (technical boards) | ~200-500 MB |
 | Delving Bitcoin | ~20 MB |
 | Specs (BIPs + BOLTs) | ~25 MB |
 | Bitcoin Optech content | ~80 MB |
-| **Total** | **~2-2.5 GB** |
+| **Total** | **~2.2-3 GB** |
 
 ## 5. Architecture
 
@@ -250,6 +252,8 @@ URL for each document is derived at query time from `source_type`,
 | `optech_newsletter` | Optech newsletter | Newsletter number |
 | `optech_topic` | Optech topic page | Topic slug |
 | `optech_blog` | Optech blog post | Post slug |
+| `bitcointalk_topic` | BitcoinTalk topic (OP) | Topic ID |
+| `bitcointalk_post` | BitcoinTalk reply post | Message ID |
 
 ### 6.2 Full-Text Search Index
 
@@ -515,6 +519,7 @@ completes in 2-4 hours automatically.
 | `DelvingSyncSource` | Discourse REST API (`/latest.json`, `/t/{id}.json`) | Last activity timestamp |
 | `OptechSyncSource` | `git fetch` + markdown file parsing | Commit SHA |
 | `SpecSyncSource` | `git fetch` + spec file parsing (BIPs/BOLTs) | Commit SHA |
+| `BitcointalkSyncSource` | HTML scraping (SMF 2.0) | Topic ID (sequential) / recent posts (tail mode) |
 
 ### 7.4 Enrichment Pipeline
 

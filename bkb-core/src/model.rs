@@ -42,6 +42,8 @@ pub enum SourceType {
 	OptechNewsletter,
 	OptechTopic,
 	OptechBlog,
+	BitcointalkTopic,
+	BitcointalkPost,
 }
 
 impl SourceType {
@@ -65,6 +67,8 @@ impl SourceType {
 			Self::OptechNewsletter => "optech_newsletter",
 			Self::OptechTopic => "optech_topic",
 			Self::OptechBlog => "optech_blog",
+			Self::BitcointalkTopic => "bitcointalk_topic",
+			Self::BitcointalkPost => "bitcointalk_post",
 		}
 	}
 
@@ -88,6 +92,8 @@ impl SourceType {
 			"optech_newsletter" => Some(Self::OptechNewsletter),
 			"optech_topic" => Some(Self::OptechTopic),
 			"optech_blog" => Some(Self::OptechBlog),
+			"bitcointalk_topic" => Some(Self::BitcointalkTopic),
+			"bitcointalk_post" => Some(Self::BitcointalkPost),
 			_ => None,
 		}
 	}
@@ -199,6 +205,23 @@ impl Document {
 			},
 			SourceType::OptechTopic => {
 				Some(format!("https://bitcoinops.org/en/topics/{}/", self.source_id))
+			},
+			SourceType::BitcointalkTopic => {
+				Some(format!("https://bitcointalk.org/index.php?topic={}.0", self.source_id))
+			},
+			SourceType::BitcointalkPost => {
+				// Extract topic_id from parent_id (e.g., "bitcointalk_topic::{topic_id}")
+				let topic_id = self
+					.parent_id
+					.as_deref()
+					.and_then(|pid| pid.strip_prefix("bitcointalk_topic::"));
+				match topic_id {
+					Some(tid) => Some(format!(
+						"https://bitcointalk.org/index.php?topic={}.msg{}#msg{}",
+						tid, self.source_id, self.source_id
+					)),
+					None => None,
+				}
 			},
 			_ => None,
 		}
@@ -452,6 +475,28 @@ mod tests {
 	fn test_blip_url() {
 		let doc = make_doc(SourceType::Blip, None, "1");
 		assert_eq!(doc.url().unwrap(), "https://github.com/lightning/blips/blob/master/blip-1.md");
+	}
+
+	#[test]
+	fn test_bitcointalk_topic_url() {
+		let doc = make_doc(SourceType::BitcointalkTopic, None, "5");
+		assert_eq!(doc.url().unwrap(), "https://bitcointalk.org/index.php?topic=5.0");
+	}
+
+	#[test]
+	fn test_bitcointalk_post_url_with_parent() {
+		let mut doc = make_doc(SourceType::BitcointalkPost, None, "12345");
+		doc.parent_id = Some("bitcointalk_topic::5".to_string());
+		assert_eq!(
+			doc.url().unwrap(),
+			"https://bitcointalk.org/index.php?topic=5.msg12345#msg12345"
+		);
+	}
+
+	#[test]
+	fn test_bitcointalk_post_url_without_parent() {
+		let doc = make_doc(SourceType::BitcointalkPost, None, "12345");
+		assert!(doc.url().is_none());
 	}
 
 	#[test]

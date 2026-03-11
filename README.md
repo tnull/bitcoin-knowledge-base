@@ -16,6 +16,7 @@ Context Protocol) server for fast, precise lookups.
 | BIPs | Raw spec files | Bitcoin Improvement Proposals |
 | BOLTs | Raw spec files | Lightning Network specifications |
 | bLIPs | Raw spec files | Bitcoin Lightning Improvement Proposals |
+| BitcoinTalk | HTML scraping (SMF 2.0) | Topics and posts from technical boards (Bitcoin Discussion, Development & Technical Discussion, etc.) |
 | Bitcoin Optech | Newsletters | Weekly summaries and topic coverage |
 
 ## Architecture

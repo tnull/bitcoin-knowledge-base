@@ -159,6 +159,8 @@ footer {
 		<option value="delving_topic">Delving Topics</option>
 		<option value="delving_post">Delving Posts</option>
 		<option value="optech_newsletter">Optech Newsletters</option>
+		<option value="bitcointalk_topic">BitcoinTalk Topics</option>
+		<option value="bitcointalk_post">BitcoinTalk Posts</option>
 	</select>
 	<button onclick="doSearch()">Search</button>
 </div>

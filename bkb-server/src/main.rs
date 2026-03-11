@@ -17,6 +17,7 @@ use bkb_ingest::metrics::Metrics;
 use bkb_ingest::queue::{JobQueue, Priority, SyncJob};
 use bkb_ingest::rate_limiter::RateLimiter;
 use bkb_ingest::repo_cache::RepoCache;
+use bkb_ingest::sources::bitcointalk::BitcointalkSyncSource;
 use bkb_ingest::sources::commits::GitCommitSyncSource;
 use bkb_ingest::sources::delving::DelvingSyncSource;
 use bkb_ingest::sources::github::{GitHubCommentSyncSource, GitHubIssueSyncSource};
@@ -55,7 +56,7 @@ struct Cli {
 
 	/// Run a single source adapter and exit (for testing).
 	/// Format: "github:owner/repo", "irc:channel", "delving", "mailing_list",
-	/// "lightning_dev", "bips", "bolts", "blips", "optech".
+	/// "lightning_dev", "bips", "bolts", "blips", "optech", "bitcointalk".
 	#[arg(long)]
 	ingest_only: Option<String>,
 
@@ -333,6 +334,25 @@ async fn main() -> Result<()> {
 			info!("registered Optech newsletter sync source");
 		}
 
+		// Register BitcoinTalk source
+		if config.sync_bitcointalk() {
+			let bt_source =
+				BitcointalkSyncSource::new(config.bitcointalk_start_topic(), cli.dev_subset);
+			let bt_interval = bt_source.poll_interval();
+			queue
+				.add_job(SyncJob {
+					source_id: "bitcointalk".to_string(),
+					source: Box::new(bt_source),
+					priority: Priority::Low,
+					cursor: None,
+					next_run: Instant::now(),
+					retry_count: 0,
+					base_interval: bt_interval,
+				})
+				.await;
+			info!("registered BitcoinTalk sync source");
+		}
+
 		// Register git commit sources per repo
 		for (owner, repo) in &repos {
 			let commit_source = GitCommitSyncSource::new(
@@ -357,9 +377,11 @@ async fn main() -> Result<()> {
 		info!(repos = repos.len(), "registered git commit sync sources");
 
 		// +6 for mailing lists (bitcoindev + lightning-dev), BIPs, BOLTs, bLIPs, Optech
+		// +1 for BitcoinTalk
 		let total_sources = repos.len() * 3 // issues + comments + commits
 			+ config.irc_channels().len()
 			+ if config.sync_delving() { 1 } else { 0 }
+			+ if config.sync_bitcointalk() { 1 } else { 0 }
 			+ 5;
 		info!(sources = total_sources, "ingestion scheduler starting");
 
@@ -419,10 +441,14 @@ async fn run_single_source(
 		Box::new(BlipSyncSource::new(token))
 	} else if spec == "optech" {
 		Box::new(OptechNewsletterSyncSource::new(token))
+	} else if spec == "bitcointalk" {
+		let config = Config::new(cli.dev_subset);
+		Box::new(BitcointalkSyncSource::new(config.bitcointalk_start_topic(), cli.dev_subset))
 	} else {
 		anyhow::bail!(
 			"unknown source: '{}'. Expected: github:owner/repo, commits:owner/repo, \
-			 irc:channel, delving, mailing_list, lightning_dev, bips, bolts, blips, optech",
+			 irc:channel, delving, mailing_list, lightning_dev, bips, bolts, blips, optech, \
+			 bitcointalk",
 			spec
 		);
 	};

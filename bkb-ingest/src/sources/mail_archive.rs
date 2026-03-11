@@ -3,13 +3,13 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use regex::Regex;
 use reqwest::Client;
 use tracing::{debug, info, warn};
 
 use bkb_core::model::{Document, SourceType};
 
 use super::{SyncPage, SyncSource};
+use crate::html_util::{html_unescape, strip_html_tags};
 use crate::rate_limiter::RateLimiter;
 
 /// Number of messages to fetch per page.
@@ -263,24 +263,6 @@ fn extract_body(html: &str) -> Option<String> {
 	} else {
 		Some(text)
 	}
-}
-
-/// Simple HTML tag stripper.
-fn strip_html_tags(html: &str) -> String {
-	thread_local! {
-		static RE_TAGS: Regex = Regex::new(r"<[^>]+>").unwrap();
-	}
-	RE_TAGS.with(|re| re.replace_all(html, "").to_string())
-}
-
-/// Unescape common HTML entities.
-fn html_unescape(s: &str) -> String {
-	s.replace("&amp;", "&")
-		.replace("&lt;", "<")
-		.replace("&gt;", ">")
-		.replace("&quot;", "\"")
-		.replace("&#39;", "'")
-		.replace("&nbsp;", " ")
 }
 
 /// Parse a date string in RFC 2822 or common email formats.

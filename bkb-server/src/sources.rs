@@ -275,6 +275,22 @@ footer {
 <h2>Discussion Forums</h2>
 
 <div class="source-card">
+<h3><a href="https://bitcointalk.org">BitcoinTalk</a></h3>
+<div class="description">Topics and posts from the technically relevant boards of BitcoinTalk, the oldest and largest Bitcoin discussion forum. Includes Bitcoin Discussion, Development &amp; Technical Discussion, Bitcoin Technical Support, Project Development, Mining, and Economics. Contains historically significant discussions including Satoshi's original posts.</div>
+<div class="meta">
+	Filter keys: <span class="source-type-tag">bitcointalk_topic</span><span class="source-type-tag">bitcointalk_post</span>
+</div>
+<div class="repo-list" style="margin-top:0.5rem">
+	<span class="repo-tag">Board 1: Bitcoin Discussion</span>
+	<span class="repo-tag">Board 6: Dev &amp; Technical</span>
+	<span class="repo-tag">Board 4: Technical Support</span>
+	<span class="repo-tag">Board 12: Project Development</span>
+	<span class="repo-tag">Board 14: Mining</span>
+	<span class="repo-tag">Board 7: Economics</span>
+</div>
+</div>
+
+<div class="source-card">
 <h3><a href="https://delvingbitcoin.org">Delving Bitcoin</a></h3>
 <div class="description">Topics and posts from delvingbitcoin.org, the Discourse-based forum for technical Bitcoin discussion. Topics are indexed as top-level documents; individual posts are stored separately with linkage to their parent topic. Covers covenant proposals, mempool policy, protocol research, and implementation discussions.</div>
 <div class="meta">
