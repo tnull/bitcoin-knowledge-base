@@ -1,6 +1,7 @@
 mod api;
 mod config;
 mod dashboard;
+mod examples;
 mod landing;
 
 use std::path::PathBuf;

@@ -18,6 +18,7 @@ use bkb_ingest::metrics::Metrics;
 use bkb_store::sqlite::SqliteStore;
 
 use crate::dashboard;
+use crate::examples;
 use crate::landing;
 
 /// Shared application state for all handlers.
@@ -43,6 +44,7 @@ pub async fn serve(state: AppState, addr: SocketAddr) -> Result<()> {
 	let mut app = Router::new()
 		.route("/", get(landing::landing_page))
 		.route("/logo.png", get(landing::logo))
+		.route("/examples", get(examples::examples_page))
 		.route("/search", get(search))
 		.route("/document/{id}", get(get_document))
 		.route("/references/{entity}", get(get_references))
