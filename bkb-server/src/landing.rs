@@ -81,7 +81,7 @@ body {
 }
 .lookup-group label { color: var(--muted); }
 .lookup-group input[type="number"] {
-	width: 70px; padding: 0.4rem; border: 1px solid var(--border);
+	width: 60px; padding: 0.4rem; border: 1px solid var(--border);
 	border-radius: 6px; background: var(--input-bg); color: var(--fg);
 }
 .lookup-group input[type="text"] {
@@ -154,6 +154,8 @@ footer {
 		<option value="bip">BIPs</option>
 		<option value="bolt">BOLTs</option>
 		<option value="blip">bLIPs</option>
+		<option value="lud">LUDs</option>
+		<option value="nut">NUTs</option>
 		<option value="mailing_list_msg">Mailing List</option>
 		<option value="irc_log">IRC Logs</option>
 		<option value="delving_topic">Delving Topics</option>
@@ -178,6 +180,14 @@ footer {
 	<div class="lookup-group">
 		<label>bLIP</label><input type="number" id="blip-num" min="0" placeholder="#">
 		<button onclick="lookupSpec('blip',document.getElementById('blip-num').value)">Go</button>
+	</div>
+	<div class="lookup-group">
+		<label>LUD</label><input type="number" id="lud-num" min="0" placeholder="#">
+		<button onclick="lookupSpec('lud',document.getElementById('lud-num').value)">Go</button>
+	</div>
+	<div class="lookup-group">
+		<label>NUT</label><input type="number" id="nut-num" min="0" placeholder="#">
+		<button onclick="lookupSpec('nut',document.getElementById('nut-num').value)">Go</button>
 	</div>
 	<div class="lookup-group">
 		<label>Timeline</label><input type="text" id="timeline-concept" placeholder="concept slug">
@@ -209,6 +219,8 @@ document.getElementById('q').addEventListener('keydown', e => { if (e.key === 'E
 document.getElementById('bip-num').addEventListener('keydown', e => { if (e.key === 'Enter') lookupSpec('bip', e.target.value); });
 document.getElementById('bolt-num').addEventListener('keydown', e => { if (e.key === 'Enter') lookupSpec('bolt', e.target.value); });
 document.getElementById('blip-num').addEventListener('keydown', e => { if (e.key === 'Enter') lookupSpec('blip', e.target.value); });
+document.getElementById('lud-num').addEventListener('keydown', e => { if (e.key === 'Enter') lookupSpec('lud', e.target.value); });
+document.getElementById('nut-num').addEventListener('keydown', e => { if (e.key === 'Enter') lookupSpec('nut', e.target.value); });
 document.getElementById('timeline-concept').addEventListener('keydown', e => { if (e.key === 'Enter') lookupTimeline(); });
 
 async function doSearch(pushState) {
@@ -335,6 +347,12 @@ function restoreFromURL() {
 	} else if (p.get('blip')) {
 		document.getElementById('blip-num').value = p.get('blip');
 		lookupSpec('blip', p.get('blip'), false);
+	} else if (p.get('lud')) {
+		document.getElementById('lud-num').value = p.get('lud');
+		lookupSpec('lud', p.get('lud'), false);
+	} else if (p.get('nut')) {
+		document.getElementById('nut-num').value = p.get('nut');
+		lookupSpec('nut', p.get('nut'), false);
 	} else if (p.get('timeline')) {
 		document.getElementById('timeline-concept').value = p.get('timeline');
 		lookupTimeline(false);
