@@ -20,6 +20,7 @@ use bkb_store::sqlite::SqliteStore;
 use crate::dashboard;
 use crate::examples;
 use crate::landing;
+use crate::sources;
 
 /// Shared application state for all handlers.
 #[derive(Clone)]
@@ -45,6 +46,7 @@ pub async fn serve(state: AppState, addr: SocketAddr) -> Result<()> {
 		.route("/", get(landing::landing_page))
 		.route("/logo.png", get(landing::logo))
 		.route("/examples", get(examples::examples_page))
+		.route("/sources", get(sources::sources_page))
 		.route("/search", get(search))
 		.route("/document/{id}", get(get_document))
 		.route("/references/{entity}", get(get_references))

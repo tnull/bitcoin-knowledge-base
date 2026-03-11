@@ -3,6 +3,7 @@ mod config;
 mod dashboard;
 mod examples;
 mod landing;
+mod sources;
 
 use std::path::PathBuf;
 use std::sync::Arc;

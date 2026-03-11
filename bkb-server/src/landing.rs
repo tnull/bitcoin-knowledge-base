@@ -137,6 +137,7 @@ footer {
 <div class="links">
 	<a href="https://github.com/tnull/bitcoin-knowledge-base">GitHub</a>
 	<a href="/examples">Example Prompts</a>
+	<a href="/sources">Data Sources</a>
 	<a href="https://github.com/tnull/bitcoin-knowledge-base/blob/master/SKILL.md">Agent Setup (SKILL.md)</a>
 	<a href="https://github.com/tnull/bitcoin-knowledge-base/blob/master/docs/DESIGN.md">Design Doc</a>
 	<a href="/health">API Health</a>

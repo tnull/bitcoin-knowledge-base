@@ -84,6 +84,7 @@ footer {
 <div class="links">
 	<a href="/">&larr; Home</a>
 	<a href="https://github.com/tnull/bitcoin-knowledge-base">GitHub</a>
+	<a href="/sources">Data Sources</a>
 	<a href="https://github.com/tnull/bitcoin-knowledge-base/blob/master/SKILL.md">Agent Setup (SKILL.md)</a>
 </div>
 
