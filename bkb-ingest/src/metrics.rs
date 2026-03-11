@@ -312,7 +312,7 @@ impl Metrics {
 			let _ = write!(
 				doc_rows,
 				"<tr><td>{st}</td><td class=\"num\">{count}</td>\
-				 <td><button class=\"btn-reset\" onclick=\"resetSource('{st}')\">Reset</button></td></tr>",
+				 <td class=\"act\"><button class=\"btn-reset\" onclick=\"resetSource('{st}')\">Reset</button></td></tr>",
 				st = html_escape(source_type),
 				count = count,
 			);
@@ -440,6 +440,7 @@ td {{ padding: 0.5rem 0.75rem; border-top: 1px solid var(--border); font-size: 0
 .bar-legend .leg-paging::before {{ background: var(--paging); }}
 .bar-legend .leg-err::before {{ background: var(--err); }}
 .bar-legend .leg-pend::before {{ background: var(--pend); }}
+.act {{ width: 1%; white-space: nowrap; text-align: right; }}
 .btn-reset {{
 	padding: 0.2rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--border);
 	border-radius: 4px; background: var(--card-bg); color: var(--err); cursor: pointer;
