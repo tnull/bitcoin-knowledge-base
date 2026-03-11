@@ -208,13 +208,17 @@ document.getElementById('bolt-num').addEventListener('keydown', e => { if (e.key
 document.getElementById('blip-num').addEventListener('keydown', e => { if (e.key === 'Enter') lookupSpec('blip', e.target.value); });
 document.getElementById('timeline-concept').addEventListener('keydown', e => { if (e.key === 'Enter') lookupTimeline(); });
 
-async function doSearch() {
+async function doSearch(pushState) {
 	const q = document.getElementById('q').value.trim();
 	if (!q) return;
 	const st = document.getElementById('source-type').value;
 	let url = '/search?q=' + encodeURIComponent(q) + '&limit=20';
 	if (st) url += '&source_type=' + st;
 	document.getElementById('detail').innerHTML = '';
+	if (pushState !== false) {
+		const qs = '?q=' + encodeURIComponent(q) + (st ? '&source_type=' + st : '');
+		history.pushState({type:'search', q, source_type: st}, '', qs);
+	}
 	try {
 		const r = await fetch(url);
 		const d = await r.json();
@@ -241,9 +245,12 @@ function renderResults(results) {
 	}).join('');
 }
 
-async function lookupSpec(type, num) {
+async function lookupSpec(type, num, pushState) {
 	if (!num) return;
 	document.getElementById('results').innerHTML = '';
+	if (pushState !== false) {
+		history.pushState({type:'spec', spec: type, num}, '', '?' + type + '=' + num);
+	}
 	try {
 		const r = await fetch('/' + type + '/' + num);
 		const d = await r.json();
@@ -252,10 +259,13 @@ async function lookupSpec(type, num) {
 	} catch(e) { showError(e.message); }
 }
 
-async function lookupTimeline() {
+async function lookupTimeline(pushState) {
 	const concept = document.getElementById('timeline-concept').value.trim();
 	if (!concept) return;
 	document.getElementById('results').innerHTML = '';
+	if (pushState !== false) {
+		history.pushState({type:'timeline', concept}, '', '?timeline=' + encodeURIComponent(concept));
+	}
 	try {
 		const r = await fetch('/timeline/' + encodeURIComponent(concept));
 		const d = await r.json();
@@ -306,6 +316,45 @@ function esc(s) {
 	if (!s) return '';
 	return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+
+function restoreFromURL() {
+	const p = new URLSearchParams(location.search);
+	if (p.get('q')) {
+		document.getElementById('q').value = p.get('q');
+		if (p.get('source_type')) document.getElementById('source-type').value = p.get('source_type');
+		doSearch(false);
+	} else if (p.get('bip')) {
+		document.getElementById('bip-num').value = p.get('bip');
+		lookupSpec('bip', p.get('bip'), false);
+	} else if (p.get('bolt')) {
+		document.getElementById('bolt-num').value = p.get('bolt');
+		lookupSpec('bolt', p.get('bolt'), false);
+	} else if (p.get('blip')) {
+		document.getElementById('blip-num').value = p.get('blip');
+		lookupSpec('blip', p.get('blip'), false);
+	} else if (p.get('timeline')) {
+		document.getElementById('timeline-concept').value = p.get('timeline');
+		lookupTimeline(false);
+	}
+}
+restoreFromURL();
+
+window.addEventListener('popstate', function(e) {
+	document.getElementById('results').innerHTML = '';
+	document.getElementById('detail').innerHTML = '';
+	if (e.state) {
+		if (e.state.type === 'search') {
+			document.getElementById('q').value = e.state.q || '';
+			document.getElementById('source-type').value = e.state.source_type || '';
+			doSearch(false);
+		} else if (e.state.type === 'spec') {
+			lookupSpec(e.state.spec, e.state.num, false);
+		} else if (e.state.type === 'timeline') {
+			document.getElementById('timeline-concept').value = e.state.concept || '';
+			lookupTimeline(false);
+		}
+	}
+});
 </script>
 </body>
 </html>
