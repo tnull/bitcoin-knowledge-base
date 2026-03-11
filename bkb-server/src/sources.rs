@@ -205,6 +205,8 @@ footer {
 <span class="repo-tag"><a href="https://github.com/lightningnetwork/lnd">lightningnetwork/lnd</a></span>
 <span class="repo-tag"><a href="https://github.com/ElementsProject/lightning">ElementsProject/lightning</a></span>
 <span class="repo-tag"><a href="https://github.com/ACINQ/eclair">ACINQ/eclair</a></span>
+<span class="repo-tag"><a href="https://github.com/lnurl/luds">lnurl/luds</a></span>
+<span class="repo-tag"><a href="https://github.com/cashubtc/nuts">cashubtc/nuts</a></span>
 <span class="repo-tag"><a href="https://github.com/bitcoinops/bitcoinops.github.io">bitcoinops/bitcoinops.github.io</a></span>
 </div>
 </div>
@@ -242,6 +244,22 @@ footer {
 	Filter key: <span class="source-type-tag">blip</span> &middot;
 	Lookup: <code>/blip/{number}</code> &middot;
 	MCP tool: <code>bkb_lookup_blip</code>
+</div>
+</div>
+
+<div class="source-card">
+<h3><a href="https://github.com/lnurl/luds">LUDs (LNURL Documents)</a></h3>
+<div class="description">LNURL protocol specifications from <code>lnurl/luds</code>. LUDs define a set of HTTP-based protocols for interacting with Lightning wallets and services, including LNURL-pay, LNURL-withdraw, LNURL-auth, and more.</div>
+<div class="meta">
+	Filter keys: <span class="source-type-tag">github_issue</span><span class="source-type-tag">github_pr</span>
+</div>
+</div>
+
+<div class="source-card">
+<h3><a href="https://github.com/cashubtc/nuts">NUTs (Notation, Usage, and Terminology)</a></h3>
+<div class="description">Cashu protocol specifications from <code>cashubtc/nuts</code>. NUTs define the Cashu ecash protocol for Bitcoin, including minting, melting, token serialization, and Lightning integration.</div>
+<div class="meta">
+	Filter keys: <span class="source-type-tag">github_issue</span><span class="source-type-tag">github_pr</span>
 </div>
 </div>
 
