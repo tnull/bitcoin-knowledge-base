@@ -25,7 +25,9 @@ use bkb_ingest::sources::irc::IrcLogSyncSource;
 use bkb_ingest::sources::mail_archive::MailArchiveSyncSource;
 use bkb_ingest::sources::mailing_list::MailingListSyncSource;
 use bkb_ingest::sources::optech::OptechNewsletterSyncSource;
-use bkb_ingest::sources::specs::{BipSyncSource, BlipSyncSource, BoltSyncSource};
+use bkb_ingest::sources::specs::{
+	BipSyncSource, BlipSyncSource, BoltSyncSource, LudSyncSource, NutSyncSource,
+};
 use bkb_ingest::sources::SyncSource;
 use bkb_store::sqlite::SqliteStore;
 
@@ -56,7 +58,7 @@ struct Cli {
 
 	/// Run a single source adapter and exit (for testing).
 	/// Format: "github:owner/repo", "irc:channel", "delving", "mailing_list",
-	/// "lightning_dev", "bips", "bolts", "blips", "optech", "bitcointalk".
+	/// "lightning_dev", "bips", "bolts", "blips", "luds", "nuts", "optech", "bitcointalk".
 	#[arg(long)]
 	ingest_only: Option<String>,
 
@@ -323,6 +325,38 @@ async fn main() -> Result<()> {
 				})
 				.await;
 			info!("registered bLIP sync source");
+
+			let lud_source = LudSyncSource::new(cli.github_token.clone());
+			let lud_interval = lud_source.poll_interval();
+			queue
+				.add_job(SyncJob {
+					source_id: "specs:luds".to_string(),
+					source: Box::new(lud_source),
+					priority: Priority::Low,
+					cursor: None,
+					next_run: Instant::now(),
+					retry_count: 0,
+					base_interval: lud_interval,
+					pages_since_persist: 0,
+				})
+				.await;
+			info!("registered LUD sync source");
+
+			let nut_source = NutSyncSource::new(cli.github_token.clone());
+			let nut_interval = nut_source.poll_interval();
+			queue
+				.add_job(SyncJob {
+					source_id: "specs:nuts".to_string(),
+					source: Box::new(nut_source),
+					priority: Priority::Low,
+					cursor: None,
+					next_run: Instant::now(),
+					retry_count: 0,
+					base_interval: nut_interval,
+					pages_since_persist: 0,
+				})
+				.await;
+			info!("registered NUT sync source");
 		}
 
 		// Register Optech newsletter source
@@ -388,13 +422,13 @@ async fn main() -> Result<()> {
 		}
 		info!(repos = repos.len(), "registered git commit sync sources");
 
-		// +6 for mailing lists (bitcoindev + lightning-dev), BIPs, BOLTs, bLIPs, Optech
+		// +8 for mailing lists (bitcoindev + lightning-dev), BIPs, BOLTs, bLIPs, LUDs, NUTs, Optech
 		// +1 for BitcoinTalk
 		let total_sources = repos.len() * 3 // issues + comments + commits
 			+ config.irc_channels().len()
 			+ if config.sync_delving() { 1 } else { 0 }
 			+ if config.sync_bitcointalk() { 1 } else { 0 }
-			+ 5;
+			+ 7;
 		info!(sources = total_sources, "ingestion scheduler starting");
 
 		let queue_handle = tokio::spawn(async move {
@@ -451,6 +485,10 @@ async fn run_single_source(
 		Box::new(BoltSyncSource::new(token))
 	} else if spec == "blips" {
 		Box::new(BlipSyncSource::new(token))
+	} else if spec == "luds" {
+		Box::new(LudSyncSource::new(token))
+	} else if spec == "nuts" {
+		Box::new(NutSyncSource::new(token))
 	} else if spec == "optech" {
 		Box::new(OptechNewsletterSyncSource::new(token))
 	} else if spec == "bitcointalk" {
@@ -459,8 +497,8 @@ async fn run_single_source(
 	} else {
 		anyhow::bail!(
 			"unknown source: '{}'. Expected: github:owner/repo, commits:owner/repo, \
-			 irc:channel, delving, mailing_list, lightning_dev, bips, bolts, blips, optech, \
-			 bitcointalk",
+			 irc:channel, delving, mailing_list, lightning_dev, bips, bolts, blips, luds, \
+			 nuts, optech, bitcointalk",
 			spec
 		);
 	};

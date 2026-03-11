@@ -286,6 +286,10 @@ pub fn extract_issue_refs(text: &str, from_doc_id: &str, source_repo: &str) -> V
 		static RE_BOLT: Regex = Regex::new(r"(?i)\bBOLT[- ]?(\d{1,2})\b").unwrap();
 		// bLIP-1, bLIP 1, blip-1, blip1
 		static RE_BLIP: Regex = Regex::new(r"(?i)\bbLIP[- ]?(\d{1,4})\b").unwrap();
+		// LUD-06, LUD 06, lud-6, lud6
+		static RE_LUD: Regex = Regex::new(r"(?i)\bLUD[- ]?(\d{1,2})\b").unwrap();
+		// NUT-00, NUT 00, nut-0, nut0
+		static RE_NUT: Regex = Regex::new(r"(?i)\bNUT[- ]?(\d{1,2})\b").unwrap();
 		// Fixes #1234, Closes #1234
 		static RE_FIXES: Regex = Regex::new(r"(?i)(?:fix(?:es|ed)?|clos(?:es|ed)?|resolv(?:es|ed)?)\s+#(\d+)").unwrap();
 		// Commit SHA references: 7-40 hex chars on a word boundary, not preceded
@@ -382,6 +386,34 @@ pub fn extract_issue_refs(text: &str, from_doc_id: &str, source_repo: &str) -> V
 				to_doc_id: None,
 				ref_type: RefType::ReferencesBlip,
 				to_external: Some(format!("bLIP-{}", &cap[1])),
+				context: Some(cap[0].to_string()),
+			});
+		}
+	});
+
+	// LUD references
+	RE_LUD.with(|re| {
+		for cap in re.captures_iter(text) {
+			refs.push(Reference {
+				id: None,
+				from_doc_id: from_doc_id.to_string(),
+				to_doc_id: None,
+				ref_type: RefType::ReferencesLud,
+				to_external: Some(format!("LUD-{}", &cap[1])),
+				context: Some(cap[0].to_string()),
+			});
+		}
+	});
+
+	// NUT references
+	RE_NUT.with(|re| {
+		for cap in re.captures_iter(text) {
+			refs.push(Reference {
+				id: None,
+				from_doc_id: from_doc_id.to_string(),
+				to_doc_id: None,
+				ref_type: RefType::ReferencesNut,
+				to_external: Some(format!("NUT-{}", &cap[1])),
 				context: Some(cap[0].to_string()),
 			});
 		}

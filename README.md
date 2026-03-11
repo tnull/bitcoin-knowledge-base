@@ -16,6 +16,8 @@ Context Protocol) server for fast, precise lookups.
 | BIPs | Raw spec files | Bitcoin Improvement Proposals |
 | BOLTs | Raw spec files | Lightning Network specifications |
 | bLIPs | Raw spec files | Bitcoin Lightning Improvement Proposals |
+| LUDs | Raw spec files | LNURL Documents (LNURL protocol specifications) |
+| NUTs | Raw spec files | Cashu protocol specifications |
 | BitcoinTalk | HTML scraping (SMF 2.0) | Topics and posts from technical boards (Bitcoin Discussion, Development & Technical Discussion, etc.) |
 | Bitcoin Optech | Newsletters | Weekly summaries and topic coverage |
 
@@ -59,6 +61,8 @@ The HTTP API is available at `http://127.0.0.1:3000` by default.
 | `GET /bip/{number}` | BIP spec with all incoming references across the knowledge base |
 | `GET /bolt/{number}` | BOLT spec with all incoming references |
 | `GET /blip/{number}` | bLIP spec with all incoming references |
+| `GET /lud/{number}` | LUD spec with all incoming references |
+| `GET /nut/{number}` | NUT spec with all incoming references |
 | `GET /timeline/{concept}` | Chronological events for a concept across all sources |
 | `GET /find_commit?q=...` | Find commits/PRs matching a description |
 | `GET /health` | Server status with document counts by source type |
@@ -73,6 +77,8 @@ The MCP server (`bkb-mcp`) exposes the following tools for AI agents:
 - `bkb_lookup_bip` -- Comprehensive BIP context
 - `bkb_lookup_bolt` -- Comprehensive BOLT context
 - `bkb_lookup_blip` -- Comprehensive bLIP context
+- `bkb_lookup_lud` -- Comprehensive LUD context
+- `bkb_lookup_nut` -- Comprehensive NUT context
 - `bkb_timeline` -- Concept timeline across sources
 - `bkb_find_commit` -- Find commits with associated PR context
 

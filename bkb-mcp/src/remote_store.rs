@@ -161,6 +161,42 @@ impl KnowledgeStore for RemoteApiStore {
 		Ok(Some(ctx))
 	}
 
+	async fn lookup_lud(&self, number: u32) -> Result<Option<DocumentContext>> {
+		let url = format!("{}/lud/{}", self.base_url, number);
+
+		let response = self.client.get(&url).send().await.context("failed to query BKB API")?;
+
+		if response.status() == reqwest::StatusCode::NOT_FOUND {
+			return Ok(None);
+		}
+
+		if !response.status().is_success() {
+			let body = response.text().await.unwrap_or_default();
+			anyhow::bail!("BKB API returned error: {}", body);
+		}
+
+		let ctx: DocumentContext = response.json().await.context("failed to parse LUD response")?;
+		Ok(Some(ctx))
+	}
+
+	async fn lookup_nut(&self, number: u32) -> Result<Option<DocumentContext>> {
+		let url = format!("{}/nut/{}", self.base_url, number);
+
+		let response = self.client.get(&url).send().await.context("failed to query BKB API")?;
+
+		if response.status() == reqwest::StatusCode::NOT_FOUND {
+			return Ok(None);
+		}
+
+		if !response.status().is_success() {
+			let body = response.text().await.unwrap_or_default();
+			anyhow::bail!("BKB API returned error: {}", body);
+		}
+
+		let ctx: DocumentContext = response.json().await.context("failed to parse NUT response")?;
+		Ok(Some(ctx))
+	}
+
 	async fn timeline(
 		&self, concept: &str, after: Option<DateTime<Utc>>, before: Option<DateTime<Utc>>,
 	) -> Result<Timeline> {

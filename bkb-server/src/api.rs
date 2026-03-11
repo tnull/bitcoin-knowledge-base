@@ -53,6 +53,8 @@ pub async fn serve(state: AppState, addr: SocketAddr) -> Result<()> {
 		.route("/bip/{number}", get(get_bip))
 		.route("/bolt/{number}", get(get_bolt))
 		.route("/blip/{number}", get(get_blip))
+		.route("/lud/{number}", get(get_lud))
+		.route("/nut/{number}", get(get_nut))
 		.route("/timeline/{concept}", get(get_timeline))
 		.route("/find_commit", get(find_commit))
 		.route("/health", get(health));
@@ -180,6 +182,26 @@ async fn get_blip(State(state): State<AppState>, Path(number): Path<u32>) -> imp
 	match state.store.lookup_blip(number).await {
 		Ok(Some(ctx)) => (StatusCode::OK, Json(serde_json::to_value(ctx).unwrap())),
 		Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "bLIP not found" }))),
+		Err(e) => {
+			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
+		},
+	}
+}
+
+async fn get_lud(State(state): State<AppState>, Path(number): Path<u32>) -> impl IntoResponse {
+	match state.store.lookup_lud(number).await {
+		Ok(Some(ctx)) => (StatusCode::OK, Json(serde_json::to_value(ctx).unwrap())),
+		Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "LUD not found" }))),
+		Err(e) => {
+			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
+		},
+	}
+}
+
+async fn get_nut(State(state): State<AppState>, Path(number): Path<u32>) -> impl IntoResponse {
+	match state.store.lookup_nut(number).await {
+		Ok(Some(ctx)) => (StatusCode::OK, Json(serde_json::to_value(ctx).unwrap())),
+		Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "NUT not found" }))),
 		Err(e) => {
 			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
 		},

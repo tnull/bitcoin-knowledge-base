@@ -500,6 +500,274 @@ impl SyncSource for BlipSyncSource {
 }
 
 // ---------------------------------------------------------------------------
+// LUD Sync Source
+// ---------------------------------------------------------------------------
+
+/// Sync source for LUD (LNURL Documents) specification files.
+///
+/// Uses the GitHub Tree API to discover which LUDs exist, then fetches
+/// their content from the raw content API.
+pub struct LudSyncSource {
+	client: Client,
+	token: Option<String>,
+	/// Discovered LUD files (populated on first fetch_page call).
+	discovered: Mutex<Option<Vec<SpecFile>>>,
+}
+
+impl LudSyncSource {
+	pub fn new(token: Option<String>) -> Self {
+		Self { client: Client::new(), token, discovered: Mutex::new(None) }
+	}
+
+	/// Discover LUD files via Tree API.
+	async fn ensure_discovered(&self, rate_limiter: &RateLimiter) -> Result<Vec<SpecFile>> {
+		{
+			let guard = self.discovered.lock().unwrap();
+			if let Some(ref files) = *guard {
+				return Ok(files.clone());
+			}
+		}
+
+		// LUD files are named like "01.md", "02.md", etc.
+		let pattern = Regex::new(r"^(\d{2})\.md$").unwrap();
+		let files = discover_spec_files(
+			&self.client,
+			"lnurl",
+			"luds",
+			"luds",
+			&pattern,
+			self.token.as_deref(),
+			rate_limiter,
+		)
+		.await?;
+
+		info!(count = files.len(), "discovered LUD files via Tree API");
+
+		let mut guard = self.discovered.lock().unwrap();
+		*guard = Some(files.clone());
+		Ok(files)
+	}
+
+	async fn fetch_lud_by_file(
+		&self, file: &SpecFile, rate_limiter: &RateLimiter,
+	) -> Result<Option<Document>> {
+		rate_limiter.acquire().await;
+
+		let url = format!("https://raw.githubusercontent.com/lnurl/luds/luds/{}", file.filename);
+
+		let mut req = self.client.get(&url).header("User-Agent", "bkb/0.1");
+
+		if let Some(ref token) = self.token {
+			req = req.header("Authorization", format!("Bearer {}", token));
+		}
+
+		let response = req.send().await?;
+		rate_limiter.update_from_response(response.headers());
+
+		if !response.status().is_success() {
+			return Ok(None);
+		}
+
+		let body = response.text().await?;
+		if body.is_empty() {
+			return Ok(None);
+		}
+
+		let title = extract_lud_title(&body, file.number);
+		let source_id = format!("{:02}", file.number);
+		let id = Document::make_id(&SourceType::Lud, None, &source_id);
+
+		Ok(Some(Document {
+			id,
+			source_type: SourceType::Lud,
+			source_repo: None,
+			source_id,
+			title: Some(title),
+			body: Some(body),
+			author: None,
+			author_id: None,
+			created_at: Utc::now(),
+			updated_at: Some(Utc::now()),
+			parent_id: None,
+			metadata: None,
+			seq: None,
+		}))
+	}
+}
+
+#[async_trait]
+impl SyncSource for LudSyncSource {
+	async fn fetch_page(
+		&self, _cursor: Option<&str>, rate_limiter: &RateLimiter,
+	) -> Result<SyncPage> {
+		let all_files = self.ensure_discovered(rate_limiter).await?;
+
+		// LUDs are few enough to fetch all in one page
+		let mut documents = Vec::new();
+
+		for file in &all_files {
+			match self.fetch_lud_by_file(file, rate_limiter).await {
+				Ok(Some(doc)) => {
+					debug!(lud = file.number, "fetched LUD");
+					documents.push(doc);
+				},
+				Ok(None) => {
+					debug!(lud = file.number, "LUD content empty, skipping");
+				},
+				Err(e) => {
+					warn!(lud = file.number, error = %e, "failed to fetch LUD");
+				},
+			}
+		}
+
+		info!(count = documents.len(), "fetched all LUDs");
+		Ok(SyncPage { documents, references: Vec::new(), next_cursor: None })
+	}
+
+	fn poll_interval(&self) -> Duration {
+		Duration::from_secs(86400)
+	}
+
+	fn name(&self) -> &str {
+		"specs:luds"
+	}
+}
+
+// ---------------------------------------------------------------------------
+// NUT Sync Source
+// ---------------------------------------------------------------------------
+
+/// Sync source for NUT (Cashu protocol) specification files.
+///
+/// Uses the GitHub Tree API to discover which NUTs exist, then fetches
+/// their content from the raw content API.
+pub struct NutSyncSource {
+	client: Client,
+	token: Option<String>,
+	/// Discovered NUT files (populated on first fetch_page call).
+	discovered: Mutex<Option<Vec<SpecFile>>>,
+}
+
+impl NutSyncSource {
+	pub fn new(token: Option<String>) -> Self {
+		Self { client: Client::new(), token, discovered: Mutex::new(None) }
+	}
+
+	/// Discover NUT files via Tree API.
+	async fn ensure_discovered(&self, rate_limiter: &RateLimiter) -> Result<Vec<SpecFile>> {
+		{
+			let guard = self.discovered.lock().unwrap();
+			if let Some(ref files) = *guard {
+				return Ok(files.clone());
+			}
+		}
+
+		// NUT files are named like "00.md", "01.md", etc. at the root level
+		let pattern = Regex::new(r"^(\d{2})\.md$").unwrap();
+		let files = discover_spec_files(
+			&self.client,
+			"cashubtc",
+			"nuts",
+			"main",
+			&pattern,
+			self.token.as_deref(),
+			rate_limiter,
+		)
+		.await?;
+
+		info!(count = files.len(), "discovered NUT files via Tree API");
+
+		let mut guard = self.discovered.lock().unwrap();
+		*guard = Some(files.clone());
+		Ok(files)
+	}
+
+	async fn fetch_nut_by_file(
+		&self, file: &SpecFile, rate_limiter: &RateLimiter,
+	) -> Result<Option<Document>> {
+		rate_limiter.acquire().await;
+
+		let url = format!("https://raw.githubusercontent.com/cashubtc/nuts/main/{}", file.filename);
+
+		let mut req = self.client.get(&url).header("User-Agent", "bkb/0.1");
+
+		if let Some(ref token) = self.token {
+			req = req.header("Authorization", format!("Bearer {}", token));
+		}
+
+		let response = req.send().await?;
+		rate_limiter.update_from_response(response.headers());
+
+		if !response.status().is_success() {
+			return Ok(None);
+		}
+
+		let body = response.text().await?;
+		if body.is_empty() {
+			return Ok(None);
+		}
+
+		let title = extract_nut_title(&body, file.number);
+		let source_id = format!("{:02}", file.number);
+		let id = Document::make_id(&SourceType::Nut, None, &source_id);
+
+		Ok(Some(Document {
+			id,
+			source_type: SourceType::Nut,
+			source_repo: None,
+			source_id,
+			title: Some(title),
+			body: Some(body),
+			author: None,
+			author_id: None,
+			created_at: Utc::now(),
+			updated_at: Some(Utc::now()),
+			parent_id: None,
+			metadata: None,
+			seq: None,
+		}))
+	}
+}
+
+#[async_trait]
+impl SyncSource for NutSyncSource {
+	async fn fetch_page(
+		&self, _cursor: Option<&str>, rate_limiter: &RateLimiter,
+	) -> Result<SyncPage> {
+		let all_files = self.ensure_discovered(rate_limiter).await?;
+
+		// NUTs are few enough to fetch all in one page
+		let mut documents = Vec::new();
+
+		for file in &all_files {
+			match self.fetch_nut_by_file(file, rate_limiter).await {
+				Ok(Some(doc)) => {
+					debug!(nut = file.number, "fetched NUT");
+					documents.push(doc);
+				},
+				Ok(None) => {
+					debug!(nut = file.number, "NUT content empty, skipping");
+				},
+				Err(e) => {
+					warn!(nut = file.number, error = %e, "failed to fetch NUT");
+				},
+			}
+		}
+
+		info!(count = documents.len(), "fetched all NUTs");
+		Ok(SyncPage { documents, references: Vec::new(), next_cursor: None })
+	}
+
+	fn poll_interval(&self) -> Duration {
+		Duration::from_secs(86400)
+	}
+
+	fn name(&self) -> &str {
+		"specs:nuts"
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -540,6 +808,44 @@ fn extract_bolt_title(body: &str, number: u32) -> String {
 		}
 	}
 	format!("BOLT-{}", number)
+}
+
+/// Extract title from a LUD document body.
+fn extract_lud_title(body: &str, number: u32) -> String {
+	// LUDs typically start with "# LUD-NN: Title" or just "# Title"
+	for line in body.lines().take(10) {
+		let trimmed = line.trim();
+		if trimmed.starts_with('#') && !trimmed.starts_with("##") {
+			let title = trimmed.trim_start_matches('#').trim();
+			if !title.is_empty() {
+				// If title already starts with "LUD-", return as-is
+				if title.starts_with("LUD-") || title.starts_with("lud-") {
+					return title.to_string();
+				}
+				return format!("LUD-{:02}: {}", number, title);
+			}
+		}
+	}
+	format!("LUD-{:02}", number)
+}
+
+/// Extract title from a NUT document body.
+fn extract_nut_title(body: &str, number: u32) -> String {
+	// NUTs typically start with "# NUT-NN: Title" or just "# Title"
+	for line in body.lines().take(10) {
+		let trimmed = line.trim();
+		if trimmed.starts_with('#') && !trimmed.starts_with("##") {
+			let title = trimmed.trim_start_matches('#').trim();
+			if !title.is_empty() {
+				// If title already starts with "NUT-", return as-is
+				if title.starts_with("NUT-") || title.starts_with("nut-") {
+					return title.to_string();
+				}
+				return format!("NUT-{:02}: {}", number, title);
+			}
+		}
+	}
+	format!("NUT-{:02}", number)
 }
 
 /// Extract title from a bLIP document body.
@@ -605,5 +911,35 @@ mod tests {
 	fn test_extract_blip_title_fallback() {
 		let body = "Some body without a title";
 		assert_eq!(extract_blip_title(body, 99), "bLIP-99");
+	}
+
+	#[test]
+	fn test_extract_lud_title_heading() {
+		let body = "# lnurl-pay\n\nSome content here.";
+		assert_eq!(extract_lud_title(body, 6), "LUD-06: lnurl-pay");
+	}
+
+	#[test]
+	fn test_extract_lud_title_fallback() {
+		let body = "Some body without a title";
+		assert_eq!(extract_lud_title(body, 1), "LUD-01");
+	}
+
+	#[test]
+	fn test_extract_nut_title_heading() {
+		let body = "# NUT-00: Notation, Usage, and Terminology\n\nSome content.";
+		assert_eq!(extract_nut_title(body, 0), "NUT-00: Notation, Usage, and Terminology");
+	}
+
+	#[test]
+	fn test_extract_nut_title_plain_heading() {
+		let body = "# Mint tokens\n\nSome content.";
+		assert_eq!(extract_nut_title(body, 4), "NUT-04: Mint tokens");
+	}
+
+	#[test]
+	fn test_extract_nut_title_fallback() {
+		let body = "Some body without a title";
+		assert_eq!(extract_nut_title(body, 99), "NUT-99");
 	}
 }

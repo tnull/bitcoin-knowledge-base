@@ -374,6 +374,8 @@ impl SqliteStore {
 			SourceType::Bip => "BIP",
 			SourceType::Bolt => "BOLT",
 			SourceType::Blip => "bLIP",
+			SourceType::Lud => "LUD",
+			SourceType::Nut => "NUT",
 			_ => unreachable!(),
 		};
 		let external_pattern = format!("{}-{}", prefix, number);
@@ -755,6 +757,14 @@ impl KnowledgeStore for SqliteStore {
 
 	async fn lookup_blip(&self, number: u32) -> Result<Option<DocumentContext>> {
 		self.lookup_spec(SourceType::Blip, number).await
+	}
+
+	async fn lookup_lud(&self, number: u32) -> Result<Option<DocumentContext>> {
+		self.lookup_spec(SourceType::Lud, number).await
+	}
+
+	async fn lookup_nut(&self, number: u32) -> Result<Option<DocumentContext>> {
+		self.lookup_spec(SourceType::Nut, number).await
 	}
 
 	async fn timeline(

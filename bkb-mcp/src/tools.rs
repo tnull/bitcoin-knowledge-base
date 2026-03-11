@@ -115,6 +115,8 @@ async fn handle_tool_call(
 		"bkb_lookup_bip" => tool_lookup_bip(store, &arguments).await,
 		"bkb_lookup_bolt" => tool_lookup_bolt(store, &arguments).await,
 		"bkb_lookup_blip" => tool_lookup_blip(store, &arguments).await,
+		"bkb_lookup_lud" => tool_lookup_lud(store, &arguments).await,
+		"bkb_lookup_nut" => tool_lookup_nut(store, &arguments).await,
 		"bkb_timeline" => tool_timeline(store, &arguments).await,
 		"bkb_find_commit" => tool_find_commit(store, &arguments).await,
 		_ => Err(anyhow::anyhow!("unknown tool: {}", tool_name)),
@@ -241,6 +243,30 @@ async fn tool_lookup_blip(store: &impl KnowledgeStore, args: &serde_json::Value)
 	match store.lookup_blip(number).await? {
 		Some(ctx) => Ok(serde_json::to_string_pretty(&ctx)?),
 		None => Ok(format!("bLIP-{} not found", number)),
+	}
+}
+
+async fn tool_lookup_lud(store: &impl KnowledgeStore, args: &serde_json::Value) -> Result<String> {
+	let number = args
+		.get("number")
+		.and_then(|v| v.as_u64())
+		.ok_or_else(|| anyhow::anyhow!("missing required parameter: number"))? as u32;
+
+	match store.lookup_lud(number).await? {
+		Some(ctx) => Ok(serde_json::to_string_pretty(&ctx)?),
+		None => Ok(format!("LUD-{} not found", number)),
+	}
+}
+
+async fn tool_lookup_nut(store: &impl KnowledgeStore, args: &serde_json::Value) -> Result<String> {
+	let number = args
+		.get("number")
+		.and_then(|v| v.as_u64())
+		.ok_or_else(|| anyhow::anyhow!("missing required parameter: number"))? as u32;
+
+	match store.lookup_nut(number).await? {
+		Some(ctx) => Ok(serde_json::to_string_pretty(&ctx)?),
+		None => Ok(format!("NUT-{} not found", number)),
 	}
 }
 
@@ -394,6 +420,34 @@ fn tool_definitions() -> serde_json::Value {
 					"number": {
 						"type": "integer",
 						"description": "bLIP number (e.g. 1)"
+					}
+				},
+				"required": ["number"]
+			}
+		},
+		{
+			"name": "bkb_lookup_lud",
+			"description": "Get comprehensive context for a LUD (LNURL Document): spec text, all referencing discussions, PRs, and related documents.",
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"number": {
+						"type": "integer",
+						"description": "LUD number (e.g. 6)"
+					}
+				},
+				"required": ["number"]
+			}
+		},
+		{
+			"name": "bkb_lookup_nut",
+			"description": "Get comprehensive context for a NUT (Cashu protocol specification): spec text, all referencing discussions, PRs, and related documents.",
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"number": {
+						"type": "integer",
+						"description": "NUT number (e.g. 0)"
 					}
 				},
 				"required": ["number"]

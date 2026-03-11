@@ -249,17 +249,21 @@ footer {
 
 <div class="source-card">
 <h3><a href="https://github.com/lnurl/luds">LUDs (LNURL Documents)</a></h3>
-<div class="description">LNURL protocol specifications from <code>lnurl/luds</code>. LUDs define a set of HTTP-based protocols for interacting with Lightning wallets and services, including LNURL-pay, LNURL-withdraw, LNURL-auth, and more.</div>
+<div class="description">LNURL protocol specifications from <code>lnurl/luds</code>. LUDs define a set of HTTP-based protocols for interacting with Lightning wallets and services, including LNURL-pay, LNURL-withdraw, LNURL-auth, and more. Supports direct lookup by number and cross-reference extraction (e.g., mentions of <code>LUD-NN</code> in other documents).</div>
 <div class="meta">
-	Filter keys: <span class="source-type-tag">github_issue</span><span class="source-type-tag">github_pr</span>
+	Filter key: <span class="source-type-tag">lud</span> &middot;
+	Lookup: <code>/lud/{number}</code> &middot;
+	MCP tool: <code>bkb_lookup_lud</code>
 </div>
 </div>
 
 <div class="source-card">
 <h3><a href="https://github.com/cashubtc/nuts">NUTs (Notation, Usage, and Terminology)</a></h3>
-<div class="description">Cashu protocol specifications from <code>cashubtc/nuts</code>. NUTs define the Cashu ecash protocol for Bitcoin, including minting, melting, token serialization, and Lightning integration.</div>
+<div class="description">Cashu protocol specifications from <code>cashubtc/nuts</code>. NUTs define the Cashu ecash protocol for Bitcoin, including minting, melting, token serialization, and Lightning integration. Supports direct lookup by number and cross-reference extraction (e.g., mentions of <code>NUT-NN</code> in other documents).</div>
 <div class="meta">
-	Filter keys: <span class="source-type-tag">github_issue</span><span class="source-type-tag">github_pr</span>
+	Filter key: <span class="source-type-tag">nut</span> &middot;
+	Lookup: <code>/nut/{number}</code> &middot;
+	MCP tool: <code>bkb_lookup_nut</code>
 </div>
 </div>
 
