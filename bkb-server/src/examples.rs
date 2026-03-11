@@ -31,7 +31,8 @@ body {
 	max-width: 900px; margin: 0 auto; padding: 2rem 1rem;
 }
 .logo { margin-bottom: 0.25rem; }
-.logo img { height: 80px; }
+.logo a { text-decoration: none; }
+.logo img { height: 110px; }
 h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
 .subtitle { color: var(--muted); margin-bottom: 1.5rem; }
 .links { margin-bottom: 2rem; }
