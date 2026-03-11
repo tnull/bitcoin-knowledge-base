@@ -303,14 +303,18 @@ impl SqliteStore {
 	) -> Result<Option<DocumentContext>> {
 		let conn = self.conn.lock().await;
 		let source_id = number.to_string();
+		// Also try zero-padded form (e.g., "06") for LUDs/NUTs whose filenames
+		// use two-digit padding.  This ensures lookups work regardless of
+		// whether the data was ingested before or after the padding fix.
+		let source_id_padded = format!("{:02}", number);
 
 		// Find the spec document.
 		let doc = conn
 			.query_row(
 				"SELECT id, source_type, source_repo, source_id, title, body,
 				 author, author_id, created_at, updated_at, parent_id, metadata, seq
-				 FROM documents WHERE source_type = ?1 AND source_id = ?2",
-				rusqlite::params![source_type.as_str(), &source_id],
+				 FROM documents WHERE source_type = ?1 AND source_id IN (?2, ?3)",
+				rusqlite::params![source_type.as_str(), &source_id, &source_id_padded],
 				|row| {
 					let source_type_str: String = row.get(1)?;
 					let created_at_str: String = row.get(8)?;
@@ -1118,5 +1122,122 @@ mod tests {
 		let retrieved = retrieved.unwrap();
 		assert_eq!(retrieved.items_found, 42);
 		assert_eq!(retrieved.status, SyncStatus::Ok);
+	}
+
+	#[tokio::test]
+	async fn test_lookup_lud() {
+		let store = SqliteStore::open_in_memory().unwrap();
+
+		// Store a LUD with unpadded source_id (as the sync adapter now does)
+		let doc = Document {
+			id: Document::make_id(&SourceType::Lud, None, "6"),
+			source_type: SourceType::Lud,
+			source_repo: None,
+			source_id: "6".to_string(),
+			title: Some("LUD-06: lnurl-pay".to_string()),
+			body: Some("# lnurl-pay\n\nSpec content here.".to_string()),
+			author: None,
+			author_id: None,
+			created_at: Utc::now(),
+			updated_at: None,
+			parent_id: None,
+			metadata: None,
+			seq: None,
+		};
+		store.upsert_document(&doc).await.unwrap();
+
+		let ctx = store.lookup_lud(6).await.unwrap();
+		assert!(ctx.is_some(), "lookup_lud(6) should find the document");
+		let ctx = ctx.unwrap();
+		assert_eq!(ctx.document.title.as_deref(), Some("LUD-06: lnurl-pay"));
+		assert_eq!(ctx.url.as_deref(), Some("https://github.com/lnurl/luds/blob/luds/06.md"));
+	}
+
+	#[tokio::test]
+	async fn test_lookup_lud_padded_source_id() {
+		let store = SqliteStore::open_in_memory().unwrap();
+
+		// Simulate old data with zero-padded source_id
+		let doc = Document {
+			id: Document::make_id(&SourceType::Lud, None, "06"),
+			source_type: SourceType::Lud,
+			source_repo: None,
+			source_id: "06".to_string(),
+			title: Some("LUD-06: lnurl-pay".to_string()),
+			body: Some("# lnurl-pay\n\nSpec content here.".to_string()),
+			author: None,
+			author_id: None,
+			created_at: Utc::now(),
+			updated_at: None,
+			parent_id: None,
+			metadata: None,
+			seq: None,
+		};
+		store.upsert_document(&doc).await.unwrap();
+
+		// lookup_lud(6) should still find it even though source_id is "06"
+		let ctx = store.lookup_lud(6).await.unwrap();
+		assert!(ctx.is_some(), "lookup_lud(6) should find padded source_id '06'");
+		assert_eq!(ctx.unwrap().document.title.as_deref(), Some("LUD-06: lnurl-pay"));
+	}
+
+	#[tokio::test]
+	async fn test_lookup_nut_zero() {
+		let store = SqliteStore::open_in_memory().unwrap();
+
+		// NUT-00 is a real spec — source_id is "0"
+		let doc = Document {
+			id: Document::make_id(&SourceType::Nut, None, "0"),
+			source_type: SourceType::Nut,
+			source_repo: None,
+			source_id: "0".to_string(),
+			title: Some("NUT-00: Notation, Usage, and Terminology".to_string()),
+			body: Some("# NUT-00\n\nSpec content here.".to_string()),
+			author: None,
+			author_id: None,
+			created_at: Utc::now(),
+			updated_at: None,
+			parent_id: None,
+			metadata: None,
+			seq: None,
+		};
+		store.upsert_document(&doc).await.unwrap();
+
+		let ctx = store.lookup_nut(0).await.unwrap();
+		assert!(ctx.is_some(), "lookup_nut(0) should find NUT-00");
+		let ctx = ctx.unwrap();
+		assert_eq!(ctx.document.title.as_deref(), Some("NUT-00: Notation, Usage, and Terminology"));
+		assert_eq!(ctx.url.as_deref(), Some("https://github.com/cashubtc/nuts/blob/main/00.md"));
+	}
+
+	#[tokio::test]
+	async fn test_lookup_nut_padded_source_id() {
+		let store = SqliteStore::open_in_memory().unwrap();
+
+		// Simulate old data with zero-padded source_id "00"
+		let doc = Document {
+			id: Document::make_id(&SourceType::Nut, None, "00"),
+			source_type: SourceType::Nut,
+			source_repo: None,
+			source_id: "00".to_string(),
+			title: Some("NUT-00: Notation, Usage, and Terminology".to_string()),
+			body: Some("# NUT-00\n\nSpec content here.".to_string()),
+			author: None,
+			author_id: None,
+			created_at: Utc::now(),
+			updated_at: None,
+			parent_id: None,
+			metadata: None,
+			seq: None,
+		};
+		store.upsert_document(&doc).await.unwrap();
+
+		// lookup_nut(0) should still find it even though source_id is "00"
+		let ctx = store.lookup_nut(0).await.unwrap();
+		assert!(ctx.is_some(), "lookup_nut(0) should find padded source_id '00'");
+		assert_eq!(
+			ctx.unwrap().document.title.as_deref(),
+			Some("NUT-00: Notation, Usage, and Terminology")
+		);
 	}
 }
