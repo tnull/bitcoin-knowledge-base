@@ -34,6 +34,9 @@ pub struct SyncJob {
 	pub next_run: Instant,
 	pub retry_count: u32,
 	pub base_interval: Duration,
+	/// Counter for pages fetched since last cursor persist.
+	/// Used to periodically save progress during long pagination runs.
+	pub pages_since_persist: u32,
 }
 
 impl Eq for SyncJob {}
@@ -59,6 +62,11 @@ impl PartialOrd for SyncJob {
 		Some(self.cmp(other))
 	}
 }
+
+/// How often to persist the cursor during pagination (every N pages).
+/// This ensures progress survives server restarts for slow-paginating
+/// sources like IRC logs and BitcoinTalk.
+const PERSIST_EVERY_N_PAGES: u32 = 10;
 
 /// Job queue that schedules and runs sync sources.
 pub struct JobQueue {
@@ -194,6 +202,19 @@ impl JobQueue {
 					job.cursor = Some(next_cursor);
 					job.next_run = Instant::now();
 					job.retry_count = 0;
+
+					// Periodically persist cursor during pagination so that
+					// progress survives server restarts.
+					job.pages_since_persist += 1;
+					if job.pages_since_persist >= PERSIST_EVERY_N_PAGES {
+						self.persist_cursor(&job.source_id, job.cursor.as_deref(), doc_count).await;
+						job.pages_since_persist = 0;
+						debug!(
+							source = %source_name,
+							cursor = ?job.cursor,
+							"persisted cursor checkpoint during pagination"
+						);
+					}
 				} else {
 					// Caught up -- persist cursor to sync_state so we resume
 					// from here on restart / next cycle

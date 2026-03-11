@@ -175,6 +175,7 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: issue_interval,
+					pages_since_persist: 0,
 				})
 				.await;
 
@@ -190,6 +191,7 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: comment_interval,
+					pages_since_persist: 0,
 				})
 				.await;
 
@@ -209,6 +211,7 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: irc_interval,
+					pages_since_persist: 0,
 				})
 				.await;
 			info!(channel = %channel, "registered IRC sync source");
@@ -227,6 +230,7 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: delving_interval,
+					pages_since_persist: 0,
 				})
 				.await;
 			info!("registered Delving Bitcoin sync source");
@@ -245,6 +249,7 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: ml_interval,
+					pages_since_persist: 0,
 				})
 				.await;
 			info!("registered bitcoindev mailing list sync source");
@@ -263,6 +268,7 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: ld_interval,
+					pages_since_persist: 0,
 				})
 				.await;
 			info!("registered lightning-dev mail-archive sync source");
@@ -281,6 +287,7 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: bip_interval,
+					pages_since_persist: 0,
 				})
 				.await;
 			info!("registered BIP sync source");
@@ -296,6 +303,7 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: bolt_interval,
+					pages_since_persist: 0,
 				})
 				.await;
 			info!("registered BOLT sync source");
@@ -311,6 +319,7 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: blip_interval,
+					pages_since_persist: 0,
 				})
 				.await;
 			info!("registered bLIP sync source");
@@ -329,6 +338,7 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: optech_interval,
+					pages_since_persist: 0,
 				})
 				.await;
 			info!("registered Optech newsletter sync source");
@@ -348,6 +358,7 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: bt_interval,
+					pages_since_persist: 0,
 				})
 				.await;
 			info!("registered BitcoinTalk sync source");
@@ -371,6 +382,7 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: commit_interval,
+					pages_since_persist: 0,
 				})
 				.await;
 		}
