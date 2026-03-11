@@ -574,7 +574,7 @@ impl LudSyncSource {
 		}
 
 		let title = extract_lud_title(&body, file.number);
-		let source_id = format!("{:02}", file.number);
+		let source_id = file.number.to_string();
 		let id = Document::make_id(&SourceType::Lud, None, &source_id);
 
 		Ok(Some(Document {
@@ -708,7 +708,7 @@ impl NutSyncSource {
 		}
 
 		let title = extract_nut_title(&body, file.number);
-		let source_id = format!("{:02}", file.number);
+		let source_id = file.number.to_string();
 		let id = Document::make_id(&SourceType::Nut, None, &source_id);
 
 		Ok(Some(Document {

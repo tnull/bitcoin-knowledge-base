@@ -187,10 +187,12 @@ impl Document {
 				self.source_id
 			)),
 			SourceType::Lud => {
-				Some(format!("https://github.com/lnurl/luds/blob/luds/{}.md", self.source_id))
+				let num: u32 = self.source_id.parse().unwrap_or(0);
+				Some(format!("https://github.com/lnurl/luds/blob/luds/{:02}.md", num))
 			},
 			SourceType::Nut => {
-				Some(format!("https://github.com/cashubtc/nuts/blob/main/{}.md", self.source_id))
+				let num: u32 = self.source_id.parse().unwrap_or(0);
+				Some(format!("https://github.com/cashubtc/nuts/blob/main/{:02}.md", num))
 			},
 			SourceType::DelvingTopic => {
 				Some(format!("https://delvingbitcoin.org/t/{}", self.source_id))
@@ -493,6 +495,18 @@ mod tests {
 	fn test_blip_url() {
 		let doc = make_doc(SourceType::Blip, None, "1");
 		assert_eq!(doc.url().unwrap(), "https://github.com/lightning/blips/blob/master/blip-1.md");
+	}
+
+	#[test]
+	fn test_lud_url() {
+		let doc = make_doc(SourceType::Lud, None, "6");
+		assert_eq!(doc.url().unwrap(), "https://github.com/lnurl/luds/blob/luds/06.md");
+	}
+
+	#[test]
+	fn test_nut_url() {
+		let doc = make_doc(SourceType::Nut, None, "0");
+		assert_eq!(doc.url().unwrap(), "https://github.com/cashubtc/nuts/blob/main/00.md");
 	}
 
 	#[test]
