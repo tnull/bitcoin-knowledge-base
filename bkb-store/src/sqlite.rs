@@ -170,6 +170,61 @@ impl SqliteStore {
 		Ok(())
 	}
 
+	/// Delete all documents, refs, concept mentions, and sync state for a given
+	/// source type.  Returns the number of documents deleted.
+	pub async fn reset_source_type(
+		&self, source_type: &str, sync_id_patterns: &[String],
+	) -> Result<u64> {
+		let conn = self.conn.lock().await;
+
+		conn.execute_batch("BEGIN IMMEDIATE")?;
+
+		// Delete concept mentions for matching documents.
+		conn.execute(
+			"DELETE FROM concept_mentions WHERE doc_id IN \
+			 (SELECT id FROM documents WHERE source_type = ?1)",
+			[source_type],
+		)?;
+
+		// Delete outgoing refs from matching documents.
+		conn.execute(
+			"DELETE FROM refs WHERE from_doc_id IN \
+			 (SELECT id FROM documents WHERE source_type = ?1)",
+			[source_type],
+		)?;
+
+		// Delete incoming refs pointing at matching documents.
+		conn.execute(
+			"DELETE FROM refs WHERE to_doc_id IN \
+			 (SELECT id FROM documents WHERE source_type = ?1)",
+			[source_type],
+		)?;
+
+		// Delete change log entries for matching documents.
+		conn.execute(
+			"DELETE FROM change_log WHERE doc_id IN \
+			 (SELECT id FROM documents WHERE source_type = ?1)",
+			[source_type],
+		)?;
+
+		// Delete the documents themselves.
+		let deleted =
+			conn.execute("DELETE FROM documents WHERE source_type = ?1", [source_type])? as u64;
+
+		// Reset matching sync state entries.
+		for pattern in sync_id_patterns {
+			if pattern.contains('%') {
+				conn.execute("DELETE FROM sync_state WHERE source_id LIKE ?1", [pattern])?;
+			} else {
+				conn.execute("DELETE FROM sync_state WHERE source_id = ?1", [pattern])?;
+			}
+		}
+
+		conn.execute_batch("COMMIT")?;
+
+		Ok(deleted)
+	}
+
 	/// Get document counts grouped by source type.
 	pub async fn get_stats(&self) -> Result<Vec<(String, i64)>> {
 		let conn = self.conn.lock().await;
@@ -1208,6 +1263,236 @@ mod tests {
 		let ctx = ctx.unwrap();
 		assert_eq!(ctx.document.title.as_deref(), Some("NUT-00: Notation, Usage, and Terminology"));
 		assert_eq!(ctx.url.as_deref(), Some("https://github.com/cashubtc/nuts/blob/main/00.md"));
+	}
+
+	#[tokio::test]
+	async fn test_reset_source_type_only_deletes_targeted() {
+		let store = SqliteStore::open_in_memory().unwrap();
+
+		// Insert a LUD document
+		let lud_doc = Document {
+			id: Document::make_id(&SourceType::Lud, None, "6"),
+			source_type: SourceType::Lud,
+			source_repo: None,
+			source_id: "6".to_string(),
+			title: Some("LUD-06".to_string()),
+			body: Some("lnurl-pay spec".to_string()),
+			author: None,
+			author_id: None,
+			created_at: Utc::now(),
+			updated_at: None,
+			parent_id: None,
+			metadata: None,
+			seq: None,
+		};
+		store.upsert_document(&lud_doc).await.unwrap();
+
+		// Insert a BIP document
+		let bip_doc = Document {
+			id: Document::make_id(&SourceType::Bip, None, "340"),
+			source_type: SourceType::Bip,
+			source_repo: None,
+			source_id: "340".to_string(),
+			title: Some("BIP-340".to_string()),
+			body: Some("Schnorr signatures".to_string()),
+			author: None,
+			author_id: None,
+			created_at: Utc::now(),
+			updated_at: None,
+			parent_id: None,
+			metadata: None,
+			seq: None,
+		};
+		store.upsert_document(&bip_doc).await.unwrap();
+
+		// Insert a GitHub issue
+		let issue_doc = Document {
+			id: "github_issue:bitcoin/bitcoin:1".to_string(),
+			source_type: SourceType::GithubIssue,
+			source_repo: Some("bitcoin/bitcoin".to_string()),
+			source_id: "1".to_string(),
+			title: Some("Test issue".to_string()),
+			body: Some("Mentions LUD-6 and BIP-340".to_string()),
+			author: Some("alice".to_string()),
+			author_id: None,
+			created_at: Utc::now(),
+			updated_at: None,
+			parent_id: None,
+			metadata: None,
+			seq: None,
+		};
+		store.upsert_document(&issue_doc).await.unwrap();
+
+		// Add a cross-reference from the issue to the LUD
+		let lud_ref = Reference {
+			id: None,
+			from_doc_id: issue_doc.id.clone(),
+			to_doc_id: None,
+			ref_type: RefType::ReferencesLud,
+			to_external: Some("LUD-6".to_string()),
+			context: None,
+		};
+		store.insert_reference(&lud_ref).await.unwrap();
+
+		// Add a cross-reference from the issue to the BIP
+		let bip_ref = Reference {
+			id: None,
+			from_doc_id: issue_doc.id.clone(),
+			to_doc_id: None,
+			ref_type: RefType::ReferencesBip,
+			to_external: Some("BIP-340".to_string()),
+			context: None,
+		};
+		store.insert_reference(&bip_ref).await.unwrap();
+
+		// Add a concept mention on the LUD doc (use a seeded concept)
+		store.upsert_concept_mention(&lud_doc.id, "taproot", 1.0).await.unwrap();
+
+		// Add sync state entries
+		let lud_state = SyncState {
+			source_id: "specs:luds".to_string(),
+			source_type: "specs".to_string(),
+			source_repo: None,
+			last_cursor: None,
+			last_synced_at: Some(Utc::now()),
+			next_run_at: None,
+			status: SyncStatus::Ok,
+			error_message: None,
+			retry_count: 0,
+			items_found: 21,
+		};
+		store.update_sync_state(&lud_state).await.unwrap();
+
+		let bip_state = SyncState {
+			source_id: "specs:bips".to_string(),
+			source_type: "specs".to_string(),
+			source_repo: None,
+			last_cursor: None,
+			last_synced_at: Some(Utc::now()),
+			next_run_at: None,
+			status: SyncStatus::Ok,
+			error_message: None,
+			retry_count: 0,
+			items_found: 300,
+		};
+		store.update_sync_state(&bip_state).await.unwrap();
+
+		// Verify all 3 docs exist
+		assert!(store.get_document(&lud_doc.id).await.unwrap().is_some());
+		assert!(store.get_document(&bip_doc.id).await.unwrap().is_some());
+		assert!(store.get_document(&issue_doc.id).await.unwrap().is_some());
+
+		// Reset LUD source type
+		let deleted = store.reset_source_type("lud", &["specs:luds".into()]).await.unwrap();
+		assert_eq!(deleted, 1, "should delete exactly 1 LUD document");
+
+		// LUD doc should be gone
+		assert!(store.get_document(&lud_doc.id).await.unwrap().is_none());
+
+		// BIP and issue docs should still exist
+		assert!(store.get_document(&bip_doc.id).await.unwrap().is_some());
+		let issue_ctx = store.get_document(&issue_doc.id).await.unwrap().unwrap();
+		assert_eq!(issue_ctx.document.title.as_deref(), Some("Test issue"));
+
+		// The issue's outgoing refs should still be intact (they originate
+		// from the issue, not from the deleted LUD)
+		assert_eq!(issue_ctx.outgoing_refs.len(), 2);
+
+		// LUD sync state should be gone, BIP sync state should remain
+		assert!(store.get_sync_state("specs:luds").await.unwrap().is_none());
+		assert!(store.get_sync_state("specs:bips").await.unwrap().is_some());
+	}
+
+	#[tokio::test]
+	async fn test_reset_source_type_with_like_pattern() {
+		let store = SqliteStore::open_in_memory().unwrap();
+
+		// Insert two GitHub issues from different repos
+		let doc1 = Document {
+			id: "github_issue:bitcoin/bitcoin:1".to_string(),
+			source_type: SourceType::GithubIssue,
+			source_repo: Some("bitcoin/bitcoin".to_string()),
+			source_id: "1".to_string(),
+			title: Some("Bitcoin issue".to_string()),
+			body: Some("body".to_string()),
+			author: None,
+			author_id: None,
+			created_at: Utc::now(),
+			updated_at: None,
+			parent_id: None,
+			metadata: None,
+			seq: None,
+		};
+		let doc2 = Document {
+			id: "github_issue:lightningdevkit/ldk-node:1".to_string(),
+			source_type: SourceType::GithubIssue,
+			source_repo: Some("lightningdevkit/ldk-node".to_string()),
+			source_id: "1".to_string(),
+			title: Some("LDK issue".to_string()),
+			body: Some("body".to_string()),
+			author: None,
+			author_id: None,
+			created_at: Utc::now(),
+			updated_at: None,
+			parent_id: None,
+			metadata: None,
+			seq: None,
+		};
+		let bolt_doc = Document {
+			id: Document::make_id(&SourceType::Bolt, None, "2"),
+			source_type: SourceType::Bolt,
+			source_repo: None,
+			source_id: "2".to_string(),
+			title: Some("BOLT-2".to_string()),
+			body: Some("Peer protocol".to_string()),
+			author: None,
+			author_id: None,
+			created_at: Utc::now(),
+			updated_at: None,
+			parent_id: None,
+			metadata: None,
+			seq: None,
+		};
+		store.upsert_document(&doc1).await.unwrap();
+		store.upsert_document(&doc2).await.unwrap();
+		store.upsert_document(&bolt_doc).await.unwrap();
+
+		// Add sync states
+		for sid in &["github:bitcoin/bitcoin:issues", "github:lightningdevkit/ldk-node:issues"] {
+			let state = SyncState {
+				source_id: sid.to_string(),
+				source_type: "github".to_string(),
+				source_repo: None,
+				last_cursor: None,
+				last_synced_at: Some(Utc::now()),
+				next_run_at: None,
+				status: SyncStatus::Ok,
+				error_message: None,
+				retry_count: 0,
+				items_found: 10,
+			};
+			store.update_sync_state(&state).await.unwrap();
+		}
+
+		// Reset github_issue — should delete both issues but not the BOLT
+		let deleted =
+			store.reset_source_type("github_issue", &["github:%:issues".into()]).await.unwrap();
+		assert_eq!(deleted, 2, "should delete both GitHub issues");
+
+		// Both issues gone
+		assert!(store.get_document(&doc1.id).await.unwrap().is_none());
+		assert!(store.get_document(&doc2.id).await.unwrap().is_none());
+
+		// BOLT still exists
+		assert!(store.get_document(&bolt_doc.id).await.unwrap().is_some());
+
+		// Both issue sync states cleared
+		assert!(store.get_sync_state("github:bitcoin/bitcoin:issues").await.unwrap().is_none());
+		assert!(store
+			.get_sync_state("github:lightningdevkit/ldk-node:issues")
+			.await
+			.unwrap()
+			.is_none());
 	}
 
 	#[tokio::test]

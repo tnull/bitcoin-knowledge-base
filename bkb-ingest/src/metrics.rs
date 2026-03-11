@@ -311,9 +311,10 @@ impl Metrics {
 		for (source_type, count) in doc_stats {
 			let _ = write!(
 				doc_rows,
-				"<tr><td>{}</td><td class=\"num\">{}</td></tr>",
-				html_escape(source_type),
-				count
+				"<tr><td>{st}</td><td class=\"num\">{count}</td>\
+				 <td><button class=\"btn-reset\" onclick=\"resetSource('{st}')\">Reset</button></td></tr>",
+				st = html_escape(source_type),
+				count = count,
 			);
 		}
 
@@ -439,6 +440,11 @@ td {{ padding: 0.5rem 0.75rem; border-top: 1px solid var(--border); font-size: 0
 .bar-legend .leg-paging::before {{ background: var(--paging); }}
 .bar-legend .leg-err::before {{ background: var(--err); }}
 .bar-legend .leg-pend::before {{ background: var(--pend); }}
+.btn-reset {{
+	padding: 0.2rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--border);
+	border-radius: 4px; background: var(--card-bg); color: var(--err); cursor: pointer;
+}}
+.btn-reset:hover {{ border-color: var(--err); background: var(--err); color: #fff; }}
 footer {{ margin-top: 2rem; text-align: center; font-size: 0.8rem; color: var(--muted); }}
 </style>
 </head>
@@ -471,7 +477,7 @@ footer {{ margin-top: 2rem; text-align: center; font-size: 0.8rem; color: var(--
 
 <h2>Documents by Source</h2>
 <table>
-<tr><th>Source Type</th><th class="num">Count</th></tr>
+<tr><th>Source Type</th><th class="num">Count</th><th></th></tr>
 {doc_rows}
 </table>
 
@@ -484,6 +490,24 @@ footer {{ margin-top: 2rem; text-align: center; font-size: 0.8rem; color: var(--
 </table>
 
 {pending_section}
+
+<script>
+async function resetSource(sourceType) {{
+	if (!confirm('Delete all ' + sourceType + ' documents and reset sync state? They will be re-ingested on the next sync cycle.')) return;
+	try {{
+		const r = await fetch('/admin/reset/' + sourceType, {{ method: 'POST' }});
+		const d = await r.json();
+		if (r.ok) {{
+			alert('Deleted ' + d.documents_deleted + ' ' + sourceType + ' documents. They will be re-ingested shortly.');
+			location.reload();
+		}} else {{
+			alert('Error: ' + (d.error || r.statusText));
+		}}
+	}} catch(e) {{
+		alert('Request failed: ' + e.message);
+	}}
+}}
+</script>
 
 <footer>Auto-refreshes every 30 seconds &middot; <a href="/metrics" style="color:var(--accent2)">Prometheus metrics</a> &middot; {git_hash}</footer>
 </body>

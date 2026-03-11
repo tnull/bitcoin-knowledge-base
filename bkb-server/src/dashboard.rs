@@ -7,7 +7,7 @@ use crate::api::AppState;
 /// Check HTTP Basic Auth against the configured admin password.
 ///
 /// Accepts any username (including empty); only the password is checked.
-fn check_admin_auth(state: &AppState, headers: &HeaderMap) -> Result<(), StatusCode> {
+pub fn check_admin_auth(state: &AppState, headers: &HeaderMap) -> Result<(), StatusCode> {
 	let password = match state.admin_password {
 		Some(ref pw) => pw,
 		None => return Err(StatusCode::NOT_FOUND),

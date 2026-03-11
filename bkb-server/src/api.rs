@@ -6,7 +6,7 @@ use axum::extract::{Path, Query, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use tower_http::cors::CorsLayer;
@@ -63,7 +63,8 @@ pub async fn serve(state: AppState, addr: SocketAddr) -> Result<()> {
 	if state.admin_password.is_some() {
 		app = app
 			.route("/metrics", get(dashboard::metrics_endpoint))
-			.route("/dashboard", get(dashboard::dashboard_page));
+			.route("/dashboard", get(dashboard::dashboard_page))
+			.route("/admin/reset/{source_type}", post(admin_reset_source_type));
 	}
 
 	let app = app
@@ -250,6 +251,80 @@ async fn find_commit(
 		Err(e) => {
 			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
 		},
+	}
+}
+
+/// Map a document `source_type` to the sync_state `source_id` pattern(s) that
+/// produce documents of that type.  Patterns with `%` are LIKE-matched.
+fn sync_patterns_for_source_type(source_type: &str) -> Vec<String> {
+	match source_type {
+		"bip" => vec!["specs:bips".into()],
+		"bolt" => vec!["specs:bolts".into()],
+		"blip" => vec!["specs:blips".into()],
+		"lud" => vec!["specs:luds".into()],
+		"nut" => vec!["specs:nuts".into()],
+		"github_issue" | "github_pr" => vec!["github:%:issues".into()],
+		"github_comment" | "github_review" | "github_review_comment" => {
+			vec!["github:%:comments".into()]
+		},
+		"github_discussion" | "github_discussion_comment" => {
+			vec!["github:%:discussions".into()]
+		},
+		"commit" => vec!["commits:%".into()],
+		"irc_log" => vec!["irc:%".into()],
+		"delving_topic" | "delving_post" => vec!["delving:%".into()],
+		"mailing_list_msg" => vec!["mailing_list:%".into(), "mail_archive:%".into()],
+		"optech_newsletter" | "optech_topic" | "optech_blog" => vec!["optech:%".into()],
+		"bitcointalk_topic" | "bitcointalk_post" => vec!["bitcointalk".into()],
+		_ => vec![],
+	}
+}
+
+async fn admin_reset_source_type(
+	State(state): State<AppState>, headers: axum::http::HeaderMap, Path(source_type): Path<String>,
+) -> impl IntoResponse {
+	if let Err(status) = dashboard::check_admin_auth(&state, &headers) {
+		return (
+			status,
+			[("www-authenticate", "Basic realm=\"BKB Admin\"")],
+			Json(serde_json::json!({ "error": "unauthorized" })),
+		);
+	}
+
+	// Validate the source type
+	if SourceType::from_str(&source_type).is_none() {
+		return (
+			StatusCode::BAD_REQUEST,
+			[("www-authenticate", "")],
+			Json(serde_json::json!({ "error": format!("unknown source type: {}", source_type) })),
+		);
+	}
+
+	let patterns = sync_patterns_for_source_type(&source_type);
+
+	match state.store.reset_source_type(&source_type, &patterns).await {
+		Ok(deleted) => {
+			tracing::info!(
+				source_type = %source_type,
+				deleted,
+				sync_patterns = ?patterns,
+				"reset source type"
+			);
+			(
+				StatusCode::OK,
+				[("www-authenticate", "")],
+				Json(serde_json::json!({
+					"source_type": source_type,
+					"documents_deleted": deleted,
+					"sync_states_cleared": patterns,
+				})),
+			)
+		},
+		Err(e) => (
+			StatusCode::INTERNAL_SERVER_ERROR,
+			[("www-authenticate", "")],
+			Json(serde_json::json!({ "error": e.to_string() })),
+		),
 	}
 }
 
