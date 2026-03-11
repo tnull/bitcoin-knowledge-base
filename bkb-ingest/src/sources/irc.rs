@@ -14,7 +14,10 @@ use crate::rate_limiter::RateLimiter;
 const GNUSHA_BASE_URL: &str = "https://gnusha.org";
 
 /// Default start date for initial sync (when no cursor is provided).
-const DEFAULT_START_DATE: &str = "2023-01-01";
+/// The gnusha.org IRC archive for `#bitcoin-core-dev` starts around
+/// 2015-09-30. We use 2015-06-01 as a safe starting point to capture
+/// the full history across all channels.
+const DEFAULT_START_DATE: &str = "2015-06-01";
 
 /// Sync source for IRC chat logs from gnusha.org.
 ///
@@ -168,7 +171,7 @@ mod tests {
 	#[test]
 	fn test_parse_cursor_none() {
 		let date = IrcLogSyncSource::parse_cursor(None).unwrap();
-		assert_eq!(date, NaiveDate::from_ymd_opt(2023, 1, 1).unwrap());
+		assert_eq!(date, NaiveDate::from_ymd_opt(2015, 6, 1).unwrap());
 	}
 
 	#[test]
