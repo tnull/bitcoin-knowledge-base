@@ -39,7 +39,8 @@ body {
 	max-width: 900px; margin: 0 auto; padding: 2rem 1rem;
 }
 .logo { margin-bottom: 0.25rem; }
-.logo img { height: 80px; }
+.logo a { text-decoration: none; }
+.logo img { height: 110px; }
 .subtitle { color: var(--muted); margin-bottom: 1rem; }
 .sources { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1.5rem; }
 .badge {
@@ -129,7 +130,7 @@ footer {
 </style>
 </head>
 <body>
-<div class="logo"><img src="/logo.png" alt="BKB"></div>
+<div class="logo"><a href="/"><img src="/logo.png" alt="BKB"></a></div>
 <p class="subtitle">Indexed knowledge from across the Bitcoin and Lightning development ecosystem, queryable by AI agents via MCP.</p>
 
 
