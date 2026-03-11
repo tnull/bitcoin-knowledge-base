@@ -225,6 +225,27 @@ impl SqliteStore {
 		Ok(deleted)
 	}
 
+	/// Return all document IDs and bodies for a given source type, for
+	/// re-enrichment.  Streams in batches to avoid loading everything into
+	/// memory at once.
+	pub async fn docs_for_reenrich(
+		&self, source_type: &str,
+	) -> Result<Vec<(String, Option<String>, Option<String>)>> {
+		let conn = self.conn.lock().await;
+		let mut stmt =
+			conn.prepare("SELECT id, body, source_repo FROM documents WHERE source_type = ?1")?;
+		let rows = stmt
+			.query_map([source_type], |row| {
+				Ok((
+					row.get::<_, String>(0)?,
+					row.get::<_, Option<String>>(1)?,
+					row.get::<_, Option<String>>(2)?,
+				))
+			})?
+			.collect::<rusqlite::Result<Vec<_>>>()?;
+		Ok(rows)
+	}
+
 	/// Get document counts grouped by source type.
 	pub async fn get_stats(&self) -> Result<Vec<(String, i64)>> {
 		let conn = self.conn.lock().await;

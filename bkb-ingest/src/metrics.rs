@@ -312,7 +312,8 @@ impl Metrics {
 			let _ = write!(
 				doc_rows,
 				"<tr><td>{st}</td><td class=\"num\">{count}</td>\
-				 <td class=\"act\"><button class=\"btn-reset\" onclick=\"resetSource('{st}')\">Reset</button></td></tr>",
+				 <td class=\"act\"><button class=\"btn-enrich\" onclick=\"reenrichSource('{st}')\">Re-enrich</button> \
+				 <button class=\"btn-reset\" onclick=\"resetSource('{st}')\">Reset</button></td></tr>",
 				st = html_escape(source_type),
 				count = count,
 			);
@@ -441,6 +442,12 @@ td {{ padding: 0.5rem 0.75rem; border-top: 1px solid var(--border); font-size: 0
 .bar-legend .leg-err::before {{ background: var(--err); }}
 .bar-legend .leg-pend::before {{ background: var(--pend); }}
 .act {{ width: 1%; white-space: nowrap; text-align: right; }}
+.btn-enrich {{
+	padding: 0.2rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--border);
+	border-radius: 4px; background: var(--card-bg); color: var(--accent2); cursor: pointer;
+	margin-right: 0.3rem;
+}}
+.btn-enrich:hover {{ border-color: var(--accent2); background: var(--accent2); color: #fff; }}
 .btn-reset {{
 	padding: 0.2rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--border);
 	border-radius: 4px; background: var(--card-bg); color: var(--err); cursor: pointer;
@@ -493,6 +500,21 @@ footer {{ margin-top: 2rem; text-align: center; font-size: 0.8rem; color: var(--
 {pending_section}
 
 <script>
+async function reenrichSource(sourceType) {{
+	if (!confirm('Re-run enrichment (refs + concept tags) on all ' + sourceType + ' documents?')) return;
+	try {{
+		const r = await fetch('/admin/reenrich/' + sourceType, {{ method: 'POST' }});
+		const d = await r.json();
+		if (r.ok) {{
+			alert('Re-enriched ' + d.documents_enriched + ' / ' + d.documents_total + ' ' + sourceType + ' documents.');
+			location.reload();
+		}} else {{
+			alert('Error: ' + (d.error || r.statusText));
+		}}
+	}} catch(e) {{
+		alert('Request failed: ' + e.message);
+	}}
+}}
 async function resetSource(sourceType) {{
 	if (!confirm('Delete all ' + sourceType + ' documents and reset sync state? They will be re-ingested on the next sync cycle.')) return;
 	try {{

@@ -262,4 +262,105 @@ pub const CONCEPTS: &[ConceptDef] = &[
 		category: "validation",
 		aliases: &["assumeutxo", "assume utxo", "assume-utxo"],
 	},
+	// -- Additional Lightning --
+	ConceptDef {
+		slug: "keysend",
+		name: "Keysend",
+		category: "lightning",
+		aliases: &["keysend", "spontaneous payment", "spontaneous payments"],
+	},
+	ConceptDef {
+		slug: "watchtower",
+		name: "Watchtowers",
+		category: "lightning",
+		aliases: &["watchtower", "watchtowers", "breach remedy"],
+	},
+	ConceptDef {
+		slug: "eltoo",
+		name: "Eltoo",
+		category: "lightning",
+		aliases: &["eltoo", "sighash_anyprevout", "anyprevout", "bip-118", "bip118"],
+	},
+	ConceptDef {
+		slug: "lsp",
+		name: "Lightning Service Provider",
+		category: "lightning",
+		aliases: &["lsp", "lightning service provider", "lsps"],
+	},
+	ConceptDef {
+		slug: "channel-factory",
+		name: "Channel Factories",
+		category: "lightning",
+		aliases: &["channel factory", "channel factories", "joinpool", "joinpools"],
+	},
+	// -- Additional scripting --
+	ConceptDef {
+		slug: "timelock",
+		name: "Timelocks",
+		category: "scripting",
+		aliases: &[
+			"timelock",
+			"timelocks",
+			"cltv",
+			"csv",
+			"bip-65",
+			"bip65",
+			"bip-112",
+			"bip112",
+			"checklocktimeverify",
+			"checksequenceverify",
+		],
+	},
+	ConceptDef {
+		slug: "vaults",
+		name: "Vaults",
+		category: "scripting",
+		aliases: &["vault", "vaults", "bitcoin vault", "bitcoin vaults"],
+	},
+	// -- Protocols --
+	ConceptDef {
+		slug: "lnurl",
+		name: "LNURL",
+		category: "protocols",
+		aliases: &["lnurl", "lnurl-pay", "lnurl-withdraw", "lnurl-auth", "lnurl-channel"],
+	},
+	ConceptDef {
+		slug: "ecash",
+		name: "Ecash",
+		category: "protocols",
+		aliases: &["ecash", "e-cash", "cashu", "chaumian"],
+	},
+	ConceptDef {
+		slug: "dlc",
+		name: "Discreet Log Contracts",
+		category: "protocols",
+		aliases: &["dlc", "discreet log contract", "discreet log contracts"],
+	},
+	ConceptDef {
+		slug: "submarine-swap",
+		name: "Submarine Swaps",
+		category: "protocols",
+		aliases: &["submarine swap", "submarine swaps", "atomic swap", "atomic swaps"],
+	},
+	ConceptDef { slug: "nostr", name: "Nostr", category: "protocols", aliases: &["nostr", "nip"] },
+	// -- Additional wallet --
+	ConceptDef {
+		slug: "coin-selection",
+		name: "Coin Selection",
+		category: "wallet",
+		aliases: &["coin selection", "coin-selection", "utxo selection"],
+	},
+	ConceptDef {
+		slug: "codex32",
+		name: "Codex32",
+		category: "wallet",
+		aliases: &["codex32", "bip-93", "bip93"],
+	},
+	// -- Additional cryptography --
+	ConceptDef {
+		slug: "threshold-signature",
+		name: "Threshold Signatures",
+		category: "cryptography",
+		aliases: &["threshold signature", "threshold signatures", "tss"],
+	},
 ];

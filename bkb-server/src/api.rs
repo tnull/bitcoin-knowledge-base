@@ -64,7 +64,8 @@ pub async fn serve(state: AppState, addr: SocketAddr) -> Result<()> {
 		app = app
 			.route("/metrics", get(dashboard::metrics_endpoint))
 			.route("/dashboard", get(dashboard::dashboard_page))
-			.route("/admin/reset/{source_type}", post(admin_reset_source_type));
+			.route("/admin/reset/{source_type}", post(admin_reset_source_type))
+			.route("/admin/reenrich/{source_type}", post(admin_reenrich_source_type));
 	}
 
 	let app = app
@@ -326,6 +327,80 @@ async fn admin_reset_source_type(
 			Json(serde_json::json!({ "error": e.to_string() })),
 		),
 	}
+}
+
+async fn admin_reenrich_source_type(
+	State(state): State<AppState>, headers: axum::http::HeaderMap, Path(source_type): Path<String>,
+) -> impl IntoResponse {
+	if let Err(status) = dashboard::check_admin_auth(&state, &headers) {
+		return (
+			status,
+			[("www-authenticate", "Basic realm=\"BKB Admin\"")],
+			Json(serde_json::json!({ "error": "unauthorized" })),
+		);
+	}
+
+	if SourceType::from_str(&source_type).is_none() {
+		return (
+			StatusCode::BAD_REQUEST,
+			[("www-authenticate", "")],
+			Json(serde_json::json!({ "error": format!("unknown source type: {}", source_type) })),
+		);
+	}
+
+	let docs = match state.store.docs_for_reenrich(&source_type).await {
+		Ok(d) => d,
+		Err(e) => {
+			return (
+				StatusCode::INTERNAL_SERVER_ERROR,
+				[("www-authenticate", "")],
+				Json(serde_json::json!({ "error": e.to_string() })),
+			)
+		},
+	};
+
+	let total = docs.len();
+	let mut enriched = 0u64;
+
+	for (doc_id, body, source_repo) in &docs {
+		if let Some(body) = body {
+			let output = bkb_ingest::enrichment::enrich(doc_id, body, source_repo.as_deref());
+
+			if let Err(e) = state.store.delete_refs_from(doc_id).await {
+				tracing::warn!(doc_id, error = %e, "failed to delete refs during re-enrich");
+				continue;
+			}
+			for reference in &output.references {
+				if let Err(e) = state.store.insert_reference(reference).await {
+					tracing::warn!(doc_id, error = %e, "failed to insert ref during re-enrich");
+				}
+			}
+
+			if let Err(e) = state.store.delete_concept_mentions(doc_id).await {
+				tracing::warn!(doc_id, error = %e, "failed to delete concepts during re-enrich");
+				continue;
+			}
+			for (slug, confidence) in &output.concept_tags {
+				if let Err(e) = state.store.upsert_concept_mention(doc_id, slug, *confidence).await
+				{
+					tracing::warn!(doc_id, slug, error = %e, "failed to upsert concept during re-enrich");
+				}
+			}
+
+			enriched += 1;
+		}
+	}
+
+	tracing::info!(source_type = %source_type, total, enriched, "re-enriched source type");
+	(
+		StatusCode::OK,
+		[("www-authenticate", "")],
+		Json(serde_json::json!({
+			"source_type": source_type,
+			"documents_total": total,
+			"documents_enriched": enriched,
+		})),
+	)
 }
 
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
