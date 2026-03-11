@@ -312,7 +312,7 @@ impl Metrics {
 			let _ = write!(
 				doc_rows,
 				"<tr><td>{st}</td><td class=\"num\">{count}</td>\
-				 <td class=\"act\"><button class=\"btn-enrich\" onclick=\"reenrichSource('{st}')\">Re-enrich</button> \
+				 <td class=\"act\"><button class=\"btn-enrich\" data-st=\"{st}\" onclick=\"reenrichSource('{st}')\">Re-enrich</button> \
 				 <button class=\"btn-reset\" onclick=\"resetSource('{st}')\">Reset</button></td></tr>",
 				st = html_escape(source_type),
 				count = count,
@@ -545,6 +545,31 @@ async function resetSource(sourceType) {{
 		alert('Request failed: ' + e.message);
 	}}
 }}
+// On load: resume progress display for any running re-enrich jobs.
+document.querySelectorAll('.btn-enrich').forEach(async btn => {{
+	const st = btn.dataset.st;
+	try {{
+		const s = await fetch('/admin/reenrich/' + st + '/status');
+		if (!s.ok) return;
+		const p = await s.json();
+		if (p.status === 'running') {{
+			btn.disabled = true;
+			btn.textContent = p.documents_done + '/' + p.documents_total;
+			const poll = setInterval(async () => {{
+				try {{
+					const r = await fetch('/admin/reenrich/' + st + '/status');
+					const d = await r.json();
+					btn.textContent = d.documents_done + '/' + d.documents_total;
+					if (d.status === 'complete' || d.status === 'idle') {{
+						clearInterval(poll);
+						btn.textContent = 'Re-enrich';
+						btn.disabled = false;
+					}}
+				}} catch(e) {{}}
+			}}, 2000);
+		}}
+	}} catch(e) {{}}
+}});
 </script>
 
 <footer>Auto-refreshes every 30 seconds &middot; <a href="/metrics" style="color:var(--accent2)">Prometheus metrics</a> &middot; {git_hash}</footer>
