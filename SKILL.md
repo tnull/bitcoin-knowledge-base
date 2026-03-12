@@ -30,6 +30,9 @@ Add a `bkb` entry to the `mcpServers` object in `~/.claude.json`:
 }
 ```
 
+Or via CLI command:
+`claude mcp add -t stdio -s user bkb bkb-mcp -e BKB_API_URL="https://bitcoinknowledge.dev"`
+
 ## Available Tools
 
 - `bkb_search` -- Full-text search across all sources (filters: `source_type`, `source_repo`, `author`, `after`, `before`, `limit`). Supports wildcard queries: use `query: "*"` with at least one filter to retrieve all documents matching the filters (e.g., all commits in a repo within a date range).
