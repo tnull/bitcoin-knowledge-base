@@ -255,7 +255,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bkb-core",
- "bkb-ingest",
  "chrono",
  "rusqlite",
  "serde",
