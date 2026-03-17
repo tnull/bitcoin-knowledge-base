@@ -7,7 +7,7 @@ pub async fn openapi_spec() -> Json<serde_json::Value> {
 
 fn spec() -> serde_json::Value {
 	serde_json::json!({
-		"openapi": "3.0.3",
+		"openapi": "3.1.0",
 		"info": {
 			"title": "Bitcoin Knowledge Base (BKB)",
 			"version": "0.1.0",
