@@ -19,9 +19,9 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 # Internal crates
-bkb-core = { path = "bkb-core" }
-bkb-ingest = { path = "bkb-ingest" }
-bkb-store = { path = "bkb-store" }
+bkb-core = { version = "0.1.0", path = "bkb-core" }
+bkb-ingest = { version = "0.1.0", path = "bkb-ingest" }
+bkb-store = { version = "0.1.0", path = "bkb-store" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
