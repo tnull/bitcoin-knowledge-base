@@ -10,7 +10,11 @@ members = [
 
 [workspace.package]
 version = "0.1.0"
+authors = ["Elias Rohrer <dev@tnull.de>"]
 edition = "2021"
+rust-version = "1.85"
+homepage = "https://bitcoinknowledge.dev"
+repository = "https://github.com/tnull/bitcoin-knowledge-base"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]

@@ -2,8 +2,15 @@
 name = "bkb-store"
 description = "SQLite storage backend with FTS5 for the Bitcoin Knowledge Base"
 version.workspace = true
+authors.workspace = true
 edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
 license.workspace = true
+readme = "../README.md"
+keywords = ["bitcoin", "lightning", "knowledge-base", "sqlite"]
+categories = ["cryptography::cryptocurrencies", "database"]
 
 [dependencies]
 bkb-core = { workspace = true }
