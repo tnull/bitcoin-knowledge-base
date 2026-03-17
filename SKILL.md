@@ -1,8 +1,8 @@
 # Bitcoin Knowledge Base (BKB) -- MCP Skill
 
 Search across the Bitcoin and Lightning development ecosystem: BIPs,
-BOLTs, bLIPs, GitHub issues/PRs/commits, mailing lists, IRC logs,
-Delving Bitcoin, and Optech newsletters.
+BOLTs, bLIPs, LUDs, NUTs, GitHub issues/PRs/commits, mailing lists,
+IRC logs, Delving Bitcoin, BitcoinTalk, and Optech newsletters.
 
 ## Setup
 
@@ -38,5 +38,7 @@ Add a `bkb` entry to the `mcpServers` object in `~/.claude.json`:
 - `bkb_lookup_bip` -- BIP spec with all referencing discussions and PRs
 - `bkb_lookup_bolt` -- BOLT spec with all referencing documents
 - `bkb_lookup_blip` -- bLIP spec with all referencing documents
+- `bkb_lookup_lud` -- LUD spec with all referencing documents
+- `bkb_lookup_nut` -- NUT spec with all referencing documents
 - `bkb_timeline` -- Chronological timeline of a concept across all sources
 - `bkb_find_commit` -- Find commits/PRs matching a description

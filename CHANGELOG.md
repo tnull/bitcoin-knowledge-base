@@ -33,7 +33,7 @@ development ecosystem, designed for querying by AI agents via MCP.
 - **BitcoinTalk**: technical board topics and posts.
 
 #### Intelligence Features
-- Concept tagging enrichment with 50 Bitcoin/Lightning concept slugs derived
+- Concept tagging enrichment with 50+ Bitcoin/Lightning concept slugs derived
   from Optech topics.
 - Timeline queries: chronological event view for any concept across all
   sources.

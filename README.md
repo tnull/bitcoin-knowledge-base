@@ -34,7 +34,8 @@ bkb-mcp       MCP server (JSON-RPC 2.0 over stdio) for AI agent access
 All content is normalized into a single `documents` table with FTS5 full-text
 search. Cross-references (BIP/BOLT/bLIP mentions, issue links, `Fixes`/`Closes`
 patterns) are extracted during ingestion. Documents are tagged with Bitcoin
-concepts (taproot, HTLCs, covenants, etc.) from a curated 35-concept vocabulary.
+concepts (taproot, HTLCs, covenants, etc.) from a curated vocabulary of 50+
+concepts.
 
 ## Quick Start
 
@@ -86,7 +87,7 @@ The MCP server (`bkb-mcp`) exposes the following tools for AI agents:
 
 ```bash
 cargo check --workspace    # Type-check all crates
-cargo test --workspace     # Run all 130 tests
+cargo test --workspace     # Run all tests
 cargo fmt --all            # Format (uses hard tabs, 100-char width)
 ```
 
@@ -95,4 +96,5 @@ data model, ingestion pipeline details, and implementation roadmap.
 
 ## License
 
-MIT OR Apache-2.0
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT License](LICENSE-MIT), at your option.
