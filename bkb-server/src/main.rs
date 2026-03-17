@@ -4,6 +4,7 @@ mod dashboard;
 mod examples;
 mod landing;
 mod openapi;
+mod privacy;
 mod sources;
 
 use std::path::PathBuf;

@@ -23,6 +23,7 @@ use crate::dashboard;
 use crate::examples;
 use crate::landing;
 use crate::openapi;
+use crate::privacy;
 use crate::sources;
 
 /// Progress tracker for a running re-enrich job.
@@ -69,7 +70,8 @@ pub async fn serve(state: AppState, addr: SocketAddr) -> Result<()> {
 		.route("/timeline/{concept}", get(get_timeline))
 		.route("/find_commit", get(find_commit))
 		.route("/health", get(health))
-		.route("/openapi.json", get(openapi::openapi_spec));
+		.route("/openapi.json", get(openapi::openapi_spec))
+		.route("/privacy", get(privacy::privacy_policy));
 
 	// Only register admin routes if a password is configured
 	if state.admin_password.is_some() {
