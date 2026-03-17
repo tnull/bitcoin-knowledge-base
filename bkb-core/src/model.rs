@@ -138,7 +138,20 @@ impl Document {
 		}
 	}
 
+	/// Return the stored URL from metadata, if present.
+	fn metadata_url(&self) -> Option<String> {
+		self.metadata
+			.as_ref()
+			.and_then(|m| m.get("url"))
+			.and_then(|v| v.as_str())
+			.map(|s| s.to_string())
+	}
+
 	/// Derive the canonical URL for this document.
+	///
+	/// For spec types (BIP, BOLT, bLIP, LUD, NUT), the URL is stored in
+	/// metadata at ingestion time since the filename is known then and
+	/// cannot be reliably reconstructed from the spec number alone.
 	pub fn url(&self) -> Option<String> {
 		match self.source_type {
 			SourceType::GithubIssue => Some(format!(
@@ -174,26 +187,12 @@ impl Document {
 				self.source_repo.as_deref()?,
 				self.source_id
 			)),
-			SourceType::Bip => Some(format!(
-				"https://github.com/bitcoin/bips/blob/master/bip-{}.mediawiki",
-				self.source_id
-			)),
-			SourceType::Bolt => Some(format!(
-				"https://github.com/lightning/bolts/blob/master/{}.md",
-				self.source_id
-			)),
-			SourceType::Blip => Some(format!(
-				"https://github.com/lightning/blips/blob/master/blip-{}.md",
-				self.source_id
-			)),
-			SourceType::Lud => {
-				let num: u32 = self.source_id.parse().unwrap_or(0);
-				Some(format!("https://github.com/lnurl/luds/blob/luds/{:02}.md", num))
-			},
-			SourceType::Nut => {
-				let num: u32 = self.source_id.parse().unwrap_or(0);
-				Some(format!("https://github.com/cashubtc/nuts/blob/main/{:02}.md", num))
-			},
+			// Spec types: use stored URL from metadata (set during ingestion).
+			SourceType::Bip
+			| SourceType::Bolt
+			| SourceType::Blip
+			| SourceType::Lud
+			| SourceType::Nut => self.metadata_url(),
 			SourceType::DelvingTopic => {
 				Some(format!("https://delvingbitcoin.org/t/{}", self.source_id))
 			},
@@ -471,11 +470,29 @@ mod tests {
 
 	#[test]
 	fn test_bip_url() {
-		let doc = make_doc(SourceType::Bip, None, "340");
+		let mut doc = make_doc(SourceType::Bip, None, "340");
+		doc.metadata = Some(
+			serde_json::json!({ "format": "mediawiki", "url": "https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki" }),
+		);
 		assert_eq!(
 			doc.url().unwrap(),
-			"https://github.com/bitcoin/bips/blob/master/bip-340.mediawiki"
+			"https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki"
 		);
+	}
+
+	#[test]
+	fn test_bip_url_md_format() {
+		let mut doc = make_doc(SourceType::Bip, None, "388");
+		doc.metadata = Some(
+			serde_json::json!({ "format": "md", "url": "https://github.com/bitcoin/bips/blob/master/bip-0388.md" }),
+		);
+		assert_eq!(doc.url().unwrap(), "https://github.com/bitcoin/bips/blob/master/bip-0388.md");
+	}
+
+	#[test]
+	fn test_bip_url_without_metadata() {
+		let doc = make_doc(SourceType::Bip, None, "340");
+		assert!(doc.url().is_none());
 	}
 
 	#[test]
@@ -492,20 +509,48 @@ mod tests {
 	}
 
 	#[test]
+	fn test_bolt_url() {
+		let mut doc = make_doc(SourceType::Bolt, None, "1");
+		doc.metadata = Some(
+			serde_json::json!({ "url": "https://github.com/lightning/bolts/blob/master/01-messaging.md" }),
+		);
+		assert_eq!(
+			doc.url().unwrap(),
+			"https://github.com/lightning/bolts/blob/master/01-messaging.md"
+		);
+	}
+
+	#[test]
+	fn test_bolt_url_without_metadata() {
+		let doc = make_doc(SourceType::Bolt, None, "1");
+		assert!(doc.url().is_none());
+	}
+
+	#[test]
 	fn test_blip_url() {
-		let doc = make_doc(SourceType::Blip, None, "1");
-		assert_eq!(doc.url().unwrap(), "https://github.com/lightning/blips/blob/master/blip-1.md");
+		let mut doc = make_doc(SourceType::Blip, None, "1");
+		doc.metadata = Some(
+			serde_json::json!({ "url": "https://github.com/lightning/blips/blob/master/blip-0001.md" }),
+		);
+		assert_eq!(
+			doc.url().unwrap(),
+			"https://github.com/lightning/blips/blob/master/blip-0001.md"
+		);
 	}
 
 	#[test]
 	fn test_lud_url() {
-		let doc = make_doc(SourceType::Lud, None, "6");
+		let mut doc = make_doc(SourceType::Lud, None, "6");
+		doc.metadata =
+			Some(serde_json::json!({ "url": "https://github.com/lnurl/luds/blob/luds/06.md" }));
 		assert_eq!(doc.url().unwrap(), "https://github.com/lnurl/luds/blob/luds/06.md");
 	}
 
 	#[test]
 	fn test_nut_url() {
-		let doc = make_doc(SourceType::Nut, None, "0");
+		let mut doc = make_doc(SourceType::Nut, None, "0");
+		doc.metadata =
+			Some(serde_json::json!({ "url": "https://github.com/cashubtc/nuts/blob/main/00.md" }));
 		assert_eq!(doc.url().unwrap(), "https://github.com/cashubtc/nuts/blob/main/00.md");
 	}
 

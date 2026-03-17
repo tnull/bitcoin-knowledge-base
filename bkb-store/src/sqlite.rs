@@ -1217,7 +1217,9 @@ mod tests {
 			created_at: Utc::now(),
 			updated_at: None,
 			parent_id: None,
-			metadata: None,
+			metadata: Some(
+				serde_json::json!({ "url": "https://github.com/lnurl/luds/blob/luds/06.md" }),
+			),
 			seq: None,
 		};
 		store.upsert_document(&doc).await.unwrap();
@@ -1274,7 +1276,9 @@ mod tests {
 			created_at: Utc::now(),
 			updated_at: None,
 			parent_id: None,
-			metadata: None,
+			metadata: Some(
+				serde_json::json!({ "url": "https://github.com/cashubtc/nuts/blob/main/00.md" }),
+			),
 			seq: None,
 		};
 		store.upsert_document(&doc).await.unwrap();

@@ -166,6 +166,7 @@ impl BipSyncSource {
 		let title = extract_bip_title(&body, file.number);
 		let source_id = file.number.to_string();
 		let id = Document::make_id(&SourceType::Bip, None, &source_id);
+		let url = format!("https://github.com/bitcoin/bips/blob/master/{}", file.filename);
 
 		Ok(Some(Document {
 			id,
@@ -179,7 +180,7 @@ impl BipSyncSource {
 			created_at: Utc::now(),
 			updated_at: Some(Utc::now()),
 			parent_id: None,
-			metadata: Some(serde_json::json!({ "format": ext })),
+			metadata: Some(serde_json::json!({ "format": ext, "url": url })),
 			seq: None,
 		}))
 	}
@@ -308,6 +309,7 @@ impl BoltSyncSource {
 		let title = extract_bolt_title(&body, file.number);
 		let source_id = file.number.to_string();
 		let id = Document::make_id(&SourceType::Bolt, None, &source_id);
+		let url = format!("https://github.com/lightning/bolts/blob/master/{}", file.filename);
 
 		Ok(Some(Document {
 			id,
@@ -321,7 +323,7 @@ impl BoltSyncSource {
 			created_at: Utc::now(),
 			updated_at: Some(Utc::now()),
 			parent_id: None,
-			metadata: None,
+			metadata: Some(serde_json::json!({ "url": url })),
 			seq: None,
 		}))
 	}
@@ -442,6 +444,7 @@ impl BlipSyncSource {
 		let title = extract_blip_title(&body, file.number);
 		let source_id = file.number.to_string();
 		let id = Document::make_id(&SourceType::Blip, None, &source_id);
+		let url = format!("https://github.com/lightning/blips/blob/master/{}", file.filename);
 
 		Ok(Some(Document {
 			id,
@@ -455,7 +458,7 @@ impl BlipSyncSource {
 			created_at: Utc::now(),
 			updated_at: Some(Utc::now()),
 			parent_id: None,
-			metadata: None,
+			metadata: Some(serde_json::json!({ "url": url })),
 			seq: None,
 		}))
 	}
@@ -576,6 +579,7 @@ impl LudSyncSource {
 		let title = extract_lud_title(&body, file.number);
 		let source_id = file.number.to_string();
 		let id = Document::make_id(&SourceType::Lud, None, &source_id);
+		let url = format!("https://github.com/lnurl/luds/blob/luds/{}", file.filename);
 
 		Ok(Some(Document {
 			id,
@@ -589,7 +593,7 @@ impl LudSyncSource {
 			created_at: Utc::now(),
 			updated_at: Some(Utc::now()),
 			parent_id: None,
-			metadata: None,
+			metadata: Some(serde_json::json!({ "url": url })),
 			seq: None,
 		}))
 	}
@@ -710,6 +714,7 @@ impl NutSyncSource {
 		let title = extract_nut_title(&body, file.number);
 		let source_id = file.number.to_string();
 		let id = Document::make_id(&SourceType::Nut, None, &source_id);
+		let url = format!("https://github.com/cashubtc/nuts/blob/main/{}", file.filename);
 
 		Ok(Some(Document {
 			id,
@@ -723,7 +728,7 @@ impl NutSyncSource {
 			created_at: Utc::now(),
 			updated_at: Some(Utc::now()),
 			parent_id: None,
-			metadata: None,
+			metadata: Some(serde_json::json!({ "url": url })),
 			seq: None,
 		}))
 	}
