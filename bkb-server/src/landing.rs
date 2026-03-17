@@ -11,7 +11,7 @@ pub async fn logo() -> impl IntoResponse {
 	([(header::CONTENT_TYPE, "image/png"), (header::CACHE_CONTROL, "public, max-age=86400")], LOGO)
 }
 
-const LOGO: &[u8] = include_bytes!("../../bkb-logo.png");
+const LOGO: &[u8] = include_bytes!("../bkb-logo.png");
 
 const LANDING_HTML: &str = r##"<!DOCTYPE html>
 <html lang="en">
