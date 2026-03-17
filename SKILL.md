@@ -10,7 +10,7 @@ Install the `bkb-mcp` client and add it to your Claude Code MCP
 configuration (`~/.claude.json`):
 
 ```bash
-cargo install --git https://github.com/tnull/bitcoin-knowledge-base.git bkb-mcp
+cargo install bkb-mcp
 ```
 
 Add a `bkb` entry to the `mcpServers` object in `~/.claude.json`:
