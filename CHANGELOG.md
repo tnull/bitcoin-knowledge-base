@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- OpenAPI 3.0 spec served at `/openapi.json` for ChatGPT Custom GPT Actions
+  integration, enabling ChatGPT to query the knowledge base alongside the
+  existing MCP support for Claude.
+
 ## [0.1.0] - 2026-03-17
 
 ### Initial Release

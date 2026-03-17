@@ -3,6 +3,7 @@ mod config;
 mod dashboard;
 mod examples;
 mod landing;
+mod openapi;
 mod sources;
 
 use std::path::PathBuf;

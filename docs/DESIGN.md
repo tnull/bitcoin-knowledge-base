@@ -7,9 +7,9 @@ serves structured data from multiple sources: GitHub repositories (code, issues,
 PRs, discussions, commits), mailing lists, IRC chat logs, forum posts,
 specification documents (BIPs/BOLTs/bLIPs), and Bitcoin Optech content.
 
-It is designed to be queried by AI agents via an MCP (Model Context Protocol)
-server for fast, precise lookups. A hosted API serves as the single source of
-truth, with the schema designed to support future local-database mode via
+It is designed to be queried by AI agents via MCP (Claude) and OpenAI Actions
+(ChatGPT) for fast, precise lookups. A hosted API serves as the single source
+of truth, with the schema designed to support future local-database mode via
 incremental sync.
 
 ## 2. Goals
@@ -754,6 +754,14 @@ Incremental change feed for client sync.
   }
 ]
 ```
+
+## 9.1 OpenAI Actions (ChatGPT)
+
+In addition to the MCP server, the HTTP API serves an OpenAPI 3.0 specification
+at `GET /openapi.json`. This enables integration with ChatGPT via Custom GPT
+Actions -- ChatGPT imports the spec URL and can call all query endpoints
+directly. No separate client binary is needed; the hosted API at
+`https://bitcoinknowledge.dev/openapi.json` serves as the action schema.
 
 ## 10. `KnowledgeStore` Trait
 

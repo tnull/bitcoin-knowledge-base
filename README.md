@@ -2,8 +2,8 @@
 
 A Bitcoin-ecosystem-specific knowledge base that ingests, indexes, and serves
 structured data from multiple sources across the Bitcoin and Lightning
-development ecosystem. Designed to be queried by AI agents via an MCP (Model
-Context Protocol) server for fast, precise lookups.
+development ecosystem. Designed to be queried by AI agents via MCP (Claude) and
+OpenAI Actions (ChatGPT) for fast, precise lookups.
 
 ## Data Sources
 
@@ -67,10 +67,26 @@ The HTTP API is available at `http://127.0.0.1:3000` by default.
 | `GET /timeline/{concept}` | Chronological events for a concept across all sources |
 | `GET /find_commit?q=...` | Find commits/PRs matching a description |
 | `GET /health` | Server status with document counts by source type |
+| `GET /openapi.json` | OpenAPI 3.0 spec for ChatGPT Actions integration |
 
-## MCP Tools
+## AI Agent Integration
 
-The MCP server (`bkb-mcp`) exposes the following tools for AI agents:
+### Claude (MCP)
+
+The MCP server (`bkb-mcp`) exposes all query capabilities as tools over
+JSON-RPC stdio. See [SKILL.md](SKILL.md) for setup instructions.
+
+### ChatGPT (OpenAI Actions)
+
+Create a Custom GPT and add an Action pointing to the OpenAPI spec:
+
+```
+https://bitcoinknowledge.dev/openapi.json
+```
+
+### MCP Tools
+
+The MCP server exposes the following tools:
 
 - `bkb_search` -- Search across all sources
 - `bkb_get_document` -- Get full document by ID

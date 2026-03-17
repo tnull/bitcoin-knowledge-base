@@ -1,10 +1,10 @@
-# Bitcoin Knowledge Base (BKB) -- MCP Skill
+# Bitcoin Knowledge Base (BKB)
 
 Search across the Bitcoin and Lightning development ecosystem: BIPs,
 BOLTs, bLIPs, LUDs, NUTs, GitHub issues/PRs/commits, mailing lists,
 IRC logs, Delving Bitcoin, BitcoinTalk, and Optech newsletters.
 
-## Setup
+## Setup for Claude (MCP)
 
 Install the `bkb-mcp` client and add it to your Claude Code MCP
 configuration (`~/.claude.json`):
@@ -29,6 +29,17 @@ Add a `bkb` entry to the `mcpServers` object in `~/.claude.json`:
   }
 }
 ```
+
+## Setup for ChatGPT (OpenAI Actions)
+
+Create a Custom GPT and add an Action with the following schema URL:
+
+```
+https://bitcoinknowledge.dev/openapi.json
+```
+
+ChatGPT will automatically discover all available endpoints from the
+OpenAPI spec.
 
 ## Available Tools
 
