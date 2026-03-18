@@ -131,7 +131,7 @@ footer {
 </head>
 <body>
 <div class="logo"><a href="/"><img src="/logo.png" alt="BKB"></a></div>
-<p class="subtitle">Indexed knowledge from across the Bitcoin and Lightning development ecosystem, queryable by AI agents via MCP.</p>
+<p class="subtitle">Indexed knowledge from across the Bitcoin and Lightning development ecosystem, queryable by AI agents.</p>
 
 
 <div class="links">
