@@ -38,7 +38,7 @@ body {
 	background: var(--bg); color: var(--fg); line-height: 1.6;
 	max-width: 900px; margin: 0 auto; padding: 2rem 1rem;
 }
-.logo { margin-bottom: 0.5rem; display: flex; justify-content: center; }
+.logo { margin-bottom: 0.5rem; }
 .logo a { text-decoration: none; }
 .logo img { display: block; max-width: 100%; height: auto; max-height: 128px; }
 .subtitle { color: var(--muted); margin-bottom: 1rem; }
