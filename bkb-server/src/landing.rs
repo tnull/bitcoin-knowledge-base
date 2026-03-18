@@ -40,7 +40,7 @@ body {
 }
 .logo { margin-bottom: 0.25rem; }
 .logo a { text-decoration: none; }
-.logo img { height: 110px; }
+.logo img { display: block; max-width: 100%; height: auto; max-height: 110px; }
 .subtitle { color: var(--muted); margin-bottom: 1rem; }
 .sources { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1.5rem; }
 .badge {

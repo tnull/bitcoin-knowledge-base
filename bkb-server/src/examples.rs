@@ -32,7 +32,7 @@ body {
 }
 .logo { margin-bottom: 0.25rem; }
 .logo a { text-decoration: none; }
-.logo img { height: 110px; }
+.logo img { display: block; max-width: 100%; height: auto; max-height: 110px; }
 h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
 .subtitle { color: var(--muted); margin-bottom: 1.5rem; }
 .links { margin-bottom: 2rem; }
