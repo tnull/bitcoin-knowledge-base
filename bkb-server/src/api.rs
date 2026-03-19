@@ -60,7 +60,7 @@ pub async fn serve(state: AppState, addr: SocketAddr) -> Result<()> {
 		.route("/examples", get(examples::examples_page))
 		.route("/sources", get(sources::sources_page))
 		.route("/search", get(search))
-		.route("/document/{id}", get(get_document))
+		.route("/document/{*id}", get(get_document))
 		.route("/references/{entity}", get(get_references))
 		.route("/bip/{number}", get(get_bip))
 		.route("/bolt/{number}", get(get_bolt))
@@ -144,9 +144,12 @@ async fn search(
 }
 
 async fn get_document(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
-	// The document ID may contain colons, which are percent-encoded in URLs.
-	// axum already decodes them for us.
-	match state.store.get_document(&id).await {
+	// The route uses a catch-all `{*id}` so that document IDs containing `/`
+	// (e.g. `github_pr:lightningdevkit/ldk-node:4463`) survive even when a
+	// reverse proxy decodes `%2F` before forwarding. Strip a potential leading
+	// `/` that the catch-all may include.
+	let id = id.strip_prefix('/').unwrap_or(&id);
+	match state.store.get_document(id).await {
 		Ok(Some(ctx)) => (StatusCode::OK, Json(serde_json::to_value(ctx).unwrap())),
 		Ok(None) => {
 			(StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "document not found" })))

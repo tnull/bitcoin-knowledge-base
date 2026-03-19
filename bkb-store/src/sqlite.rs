@@ -1034,14 +1034,12 @@ impl SqliteStore {
 ///
 /// Escapes special characters and wraps terms for prefix matching.
 fn build_fts_query(input: &str) -> String {
-	// For now, pass through as-is with basic quoting.
-	// FTS5 handles most inputs gracefully.
 	let trimmed = input.trim();
 	if trimmed.is_empty() {
 		return "\"\"".to_string();
 	}
 
-	// If the query contains FTS5 operators, pass through as-is
+	// If the query already uses FTS5 operators / quoting, pass through as-is.
 	if trimmed.contains('"')
 		|| trimmed.contains("AND")
 		|| trimmed.contains("OR")
@@ -1051,15 +1049,29 @@ fn build_fts_query(input: &str) -> String {
 		return trimmed.to_string();
 	}
 
-	// Otherwise, quote the entire query for phrase matching or simple term matching
-	// Split into words and join with spaces (implicit AND in FTS5)
+	// Split into whitespace-delimited terms and individually quote any term
+	// that contains FTS5 special characters (`:` is the column-filter
+	// operator — passing it unquoted causes "no such column" errors when
+	// queries contain repo names like "lightningdevkit/ldk-node:4463").
 	let terms: Vec<&str> = trimmed.split_whitespace().collect();
-	if terms.len() == 1 {
-		// Single word: use prefix matching
-		format!("{}*", terms[0])
+
+	let needs_quoting = |t: &str| t.contains(':') || t.contains('/') || t.contains('#');
+
+	let quoted: Vec<String> = terms
+		.iter()
+		.map(|t| if needs_quoting(t) { format!("\"{}\"", t) } else { t.to_string() })
+		.collect();
+
+	if quoted.len() == 1 {
+		// Single term: use prefix matching (but not if already quoted).
+		if needs_quoting(terms[0]) {
+			quoted[0].clone()
+		} else {
+			format!("{}*", quoted[0])
+		}
 	} else {
-		// Multiple words: use implicit AND (just space-separated terms)
-		terms.join(" ")
+		// Multiple terms: implicit AND (space-separated).
+		quoted.join(" ")
 	}
 }
 
@@ -1143,6 +1155,37 @@ mod tests {
 
 		assert_eq!(results.results.len(), 1);
 		assert!(results.results[0].title.as_deref().unwrap().contains("taproot"));
+	}
+
+	/// Regression test: queries containing `:` must not trigger FTS5
+	/// "no such column" errors (`:` is the column-filter operator).
+	#[tokio::test]
+	async fn test_search_fts_with_colon_in_query() {
+		let store = SqliteStore::open_in_memory().unwrap();
+
+		let mut doc = test_doc(
+			"github_pr:lightningdevkit/ldk-node:4463",
+			"Fix lightning channel close",
+			"Resolves an issue with force-close in ldk-node",
+		);
+		doc.source_type = SourceType::GithubPr;
+		doc.source_repo = Some("lightningdevkit/ldk-node".to_string());
+		doc.source_id = "4463".to_string();
+		store.upsert_document(&doc).await.unwrap();
+
+		// Query containing `:` — previously caused "no such column: lightning".
+		let results = store
+			.search(SearchParams {
+				query: "lightningdevkit/ldk-node:4463".to_string(),
+				..Default::default()
+			})
+			.await;
+		assert!(results.is_ok(), "search with colon must not fail: {:?}", results.err());
+
+		// Also verify the document can be retrieved by its ID (which contains `/`).
+		let ctx = store.get_document("github_pr:lightningdevkit/ldk-node:4463").await.unwrap();
+		assert!(ctx.is_some());
+		assert_eq!(ctx.unwrap().document.source_id, "4463");
 	}
 
 	#[tokio::test]
