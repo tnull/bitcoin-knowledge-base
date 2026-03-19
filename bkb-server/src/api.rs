@@ -158,7 +158,11 @@ async fn search(
 	match state.store.search(params).await {
 		Ok(results) => (StatusCode::OK, Json(serde_json::to_value(results).unwrap())),
 		Err(e) => {
-			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
+			tracing::error!(error = %e, "search failed");
+			(
+				StatusCode::INTERNAL_SERVER_ERROR,
+				Json(serde_json::json!({ "error": "internal error" })),
+			)
 		},
 	}
 }
@@ -175,7 +179,11 @@ async fn get_document(State(state): State<AppState>, Path(id): Path<String>) -> 
 			(StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "document not found" })))
 		},
 		Err(e) => {
-			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
+			tracing::error!(doc_id = %id, error = %e, "get_document failed");
+			(
+				StatusCode::INTERNAL_SERVER_ERROR,
+				Json(serde_json::json!({ "error": "internal error" })),
+			)
 		},
 	}
 }
@@ -193,7 +201,11 @@ async fn get_references(
 	match state.store.get_references(&entity, query.ref_type.as_deref(), limit).await {
 		Ok(refs) => (StatusCode::OK, Json(serde_json::to_value(refs).unwrap())),
 		Err(e) => {
-			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
+			tracing::error!(entity = %entity, error = %e, "get_references failed");
+			(
+				StatusCode::INTERNAL_SERVER_ERROR,
+				Json(serde_json::json!({ "error": "internal error" })),
+			)
 		},
 	}
 }
@@ -203,7 +215,11 @@ async fn get_bip(State(state): State<AppState>, Path(number): Path<u32>) -> impl
 		Ok(Some(ctx)) => (StatusCode::OK, Json(serde_json::to_value(ctx).unwrap())),
 		Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "BIP not found" }))),
 		Err(e) => {
-			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
+			tracing::error!(number, error = %e, "lookup_bip failed");
+			(
+				StatusCode::INTERNAL_SERVER_ERROR,
+				Json(serde_json::json!({ "error": "internal error" })),
+			)
 		},
 	}
 }
@@ -213,7 +229,11 @@ async fn get_bolt(State(state): State<AppState>, Path(number): Path<u32>) -> imp
 		Ok(Some(ctx)) => (StatusCode::OK, Json(serde_json::to_value(ctx).unwrap())),
 		Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "BOLT not found" }))),
 		Err(e) => {
-			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
+			tracing::error!(number, error = %e, "lookup_bolt failed");
+			(
+				StatusCode::INTERNAL_SERVER_ERROR,
+				Json(serde_json::json!({ "error": "internal error" })),
+			)
 		},
 	}
 }
@@ -223,7 +243,11 @@ async fn get_blip(State(state): State<AppState>, Path(number): Path<u32>) -> imp
 		Ok(Some(ctx)) => (StatusCode::OK, Json(serde_json::to_value(ctx).unwrap())),
 		Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "bLIP not found" }))),
 		Err(e) => {
-			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
+			tracing::error!(number, error = %e, "lookup_blip failed");
+			(
+				StatusCode::INTERNAL_SERVER_ERROR,
+				Json(serde_json::json!({ "error": "internal error" })),
+			)
 		},
 	}
 }
@@ -233,7 +257,11 @@ async fn get_lud(State(state): State<AppState>, Path(number): Path<u32>) -> impl
 		Ok(Some(ctx)) => (StatusCode::OK, Json(serde_json::to_value(ctx).unwrap())),
 		Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "LUD not found" }))),
 		Err(e) => {
-			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
+			tracing::error!(number, error = %e, "lookup_lud failed");
+			(
+				StatusCode::INTERNAL_SERVER_ERROR,
+				Json(serde_json::json!({ "error": "internal error" })),
+			)
 		},
 	}
 }
@@ -243,7 +271,11 @@ async fn get_nut(State(state): State<AppState>, Path(number): Path<u32>) -> impl
 		Ok(Some(ctx)) => (StatusCode::OK, Json(serde_json::to_value(ctx).unwrap())),
 		Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "NUT not found" }))),
 		Err(e) => {
-			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
+			tracing::error!(number, error = %e, "lookup_nut failed");
+			(
+				StatusCode::INTERNAL_SERVER_ERROR,
+				Json(serde_json::json!({ "error": "internal error" })),
+			)
 		},
 	}
 }
@@ -271,7 +303,11 @@ async fn get_timeline(
 	match state.store.timeline(&concept, after, before).await {
 		Ok(timeline) => (StatusCode::OK, Json(serde_json::to_value(timeline).unwrap())),
 		Err(e) => {
-			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
+			tracing::error!(concept = %concept, error = %e, "timeline failed");
+			(
+				StatusCode::INTERNAL_SERVER_ERROR,
+				Json(serde_json::json!({ "error": "internal error" })),
+			)
 		},
 	}
 }
@@ -288,7 +324,11 @@ async fn find_commit(
 	match state.store.find_commit(&query.q, query.repo.as_deref()).await {
 		Ok(results) => (StatusCode::OK, Json(serde_json::to_value(results).unwrap())),
 		Err(e) => {
-			(StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
+			tracing::error!(error = %e, "find_commit failed");
+			(
+				StatusCode::INTERNAL_SERVER_ERROR,
+				Json(serde_json::json!({ "error": "internal error" })),
+			)
 		},
 	}
 }
@@ -382,11 +422,14 @@ async fn admin_reset_source_type(
 				})),
 			)
 		},
-		Err(e) => (
-			StatusCode::INTERNAL_SERVER_ERROR,
-			[("www-authenticate", "")],
-			Json(serde_json::json!({ "error": e.to_string() })),
-		),
+		Err(e) => {
+			tracing::error!(source_type = %source_type, error = %e, "admin reset failed");
+			(
+				StatusCode::INTERNAL_SERVER_ERROR,
+				[("www-authenticate", "")],
+				Json(serde_json::json!({ "error": "internal error" })),
+			)
+		},
 	}
 }
 
@@ -434,11 +477,12 @@ async fn admin_reenrich_source_type(
 	let docs = match state.store.docs_for_reenrich(&source_type).await {
 		Ok(d) => d,
 		Err(e) => {
+			tracing::error!(source_type = %source_type, error = %e, "docs_for_reenrich failed");
 			return (
 				StatusCode::INTERNAL_SERVER_ERROR,
 				[("www-authenticate", "")],
-				Json(serde_json::json!({ "error": e.to_string() })),
-			)
+				Json(serde_json::json!({ "error": "internal error" })),
+			);
 		},
 	};
 
