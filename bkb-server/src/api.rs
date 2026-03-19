@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use anyhow::Result;
-use axum::extract::{Path, Query, Request, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
 use axum::http::{HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -102,6 +102,7 @@ pub async fn serve(state: AppState, addr: SocketAddr) -> Result<()> {
 	}
 
 	let app = app
+		.layer(DefaultBodyLimit::max(1_048_576))
 		.layer(middleware::from_fn_with_state(state.clone(), count_requests))
 		.layer(middleware::from_fn(security_headers))
 		.layer(CorsLayer::permissive())
