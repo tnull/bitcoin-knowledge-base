@@ -144,6 +144,31 @@ impl JobQueue {
 	/// Execute a single job: fetch one page, store results, re-enqueue.
 	async fn execute_job(&self, mut job: SyncJob) {
 		let source_name = job.source.name().to_string();
+
+		// If the job has a cursor but sync_state was deleted (e.g. via an
+		// admin reset), clear the in-memory cursor so we start from scratch
+		// instead of re-fetching only the tail page.
+		if job.cursor.is_some() {
+			match self.store.get_sync_state(&job.source_id).await {
+				Ok(Some(state)) if state.last_cursor.is_some() => {},
+				Ok(_) => {
+					info!(
+						source = %source_name,
+						old_cursor = ?job.cursor,
+						"sync_state was reset, clearing in-memory cursor"
+					);
+					job.cursor = None;
+				},
+				Err(e) => {
+					warn!(
+						source = %source_name,
+						error = %e,
+						"failed to check sync_state, keeping current cursor"
+					);
+				},
+			}
+		}
+
 		info!(source = %source_name, cursor = ?job.cursor, "executing sync job");
 
 		let started = std::time::Instant::now();

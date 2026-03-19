@@ -319,6 +319,29 @@ async fn admin_reset_source_type(
 		);
 	}
 
+	// Refuse reset while a re-enrich job is running for this source type,
+	// as deleting documents mid-enrichment would leave orphaned refs and
+	// concept_mentions in the database.
+	{
+		let jobs = state.reenrich_jobs.lock().await;
+		if let Some(progress) = jobs.get(&source_type) {
+			let total = progress.total.load(std::sync::atomic::Ordering::Relaxed);
+			let done = progress.done.load(std::sync::atomic::Ordering::Relaxed);
+			if done < total {
+				return (
+					StatusCode::CONFLICT,
+					[("www-authenticate", "")],
+					Json(serde_json::json!({
+						"error": "cannot reset while re-enrich is running",
+						"source_type": source_type,
+						"reenrich_total": total,
+						"reenrich_done": done,
+					})),
+				);
+			}
+		}
+	}
+
 	let patterns = sync_patterns_for_source_type(&source_type);
 
 	match state.store.reset_source_type(&source_type, &patterns).await {
