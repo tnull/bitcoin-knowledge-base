@@ -60,7 +60,7 @@ async fn handle_request(store: &impl KnowledgeStore, request: &JsonRpcRequest) -
 				},
 				"serverInfo": {
 					"name": "bkb-mcp",
-					"version": "0.1.0"
+					"version": "0.2.0"
 				}
 			})),
 			error: None,

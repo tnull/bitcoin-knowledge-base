@@ -10,7 +10,7 @@ fn spec() -> serde_json::Value {
 		"openapi": "3.1.0",
 		"info": {
 			"title": "Bitcoin Knowledge Base (BKB)",
-			"version": "0.1.0",
+			"version": "0.2.0",
 			"description": "Indexed knowledge from across the Bitcoin and Lightning development ecosystem. Search BIPs, BOLTs, bLIPs, LUDs, NUTs, GitHub issues/PRs/commits, mailing lists, IRC logs, Delving Bitcoin, BitcoinTalk, and Optech newsletters."
 		},
 		"servers": [

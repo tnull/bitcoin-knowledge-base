@@ -177,7 +177,7 @@ checksum = "843867be96c8daad0d758b57df9392b6d8d271134fce549de6ce169ff98a92af"
 
 [[package]]
 name = "bkb-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "bkb-ingest"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -210,7 +210,7 @@ dependencies = [
 
 [[package]]
 name = "bkb-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -229,7 +229,7 @@ dependencies = [
 
 [[package]]
 name = "bkb-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -250,7 +250,7 @@ dependencies = [
 
 [[package]]
 name = "bkb-store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",

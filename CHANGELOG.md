@@ -4,10 +4,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-03-19
+
 ### Added
-- OpenAPI 3.0 spec served at `/openapi.json` for ChatGPT Custom GPT Actions
+- OpenAPI 3.1 spec served at `/openapi.json` for ChatGPT Custom GPT Actions
   integration, enabling ChatGPT to query the knowledge base alongside the
   existing MCP support for Claude.
+- Privacy policy page at `/privacy` for ChatGPT store publishing.
+- Admin reset now refuses to proceed while a re-enrich job is running for the
+  same source type (`409 Conflict`), preventing orphaned data.
+
+### Fixed
+- FTS5 search queries containing `:`, `/`, or `#` (e.g. repo-qualified names
+  like `lightningdevkit/ldk-node:4463`) no longer crash with "no such column"
+  errors. Individual terms containing these characters are now quoted before
+  being passed to the FTS5 engine.
+- `/document/{id}` route changed to a catch-all (`/document/{*id}`) so that
+  document IDs containing `/` survive reverse proxies that decode `%2F`.
+- Admin "Reset" for paginated sources (BIPs, BOLTs, etc.) no longer leaves
+  ingestion stuck on the last page. The sync job now checks `sync_state`
+  before each run and clears stale in-memory cursors when the DB entry has
+  been deleted.
+- FTS5 operator detection now uses exact whole-word matching, preventing
+  false positives where words like "MONITOR" (contains "OR") or "HANDLER"
+  (contains "AND") were misidentified as FTS5 boolean keywords.
+- FTS5 queries containing double-quotes with colons (e.g.
+  `lightning:"channel close"`) no longer bypass per-term quoting. All
+  double-quotes are now stripped from user input before sanitization, and
+  `find_associated_prs` SHA lookups are routed through the same
+  `build_fts_query` sanitizer for defense-in-depth.
 
 ## [0.1.0] - 2026-03-17
 
