@@ -990,11 +990,12 @@ impl SqliteStore {
 			 AND documents_fts MATCH ?1",
 		);
 
+		let fts_sha = build_fts_query(sha_prefix);
 		let params: Vec<Box<dyn rusqlite::types::ToSql>> = if let Some(ref repo) = repo {
 			sql.push_str(" AND d.source_repo = ?2");
-			vec![Box::new(sha_prefix.to_string()), Box::new(repo.clone())]
+			vec![Box::new(fts_sha.clone()), Box::new(repo.clone())]
 		} else {
-			vec![Box::new(sha_prefix.to_string())]
+			vec![Box::new(fts_sha.clone())]
 		};
 
 		sql.push_str(" LIMIT 5");
@@ -1039,10 +1040,12 @@ fn build_fts_query(input: &str) -> String {
 		return "\"\"".to_string();
 	}
 
-	// If the user already included explicit quoting, pass through as-is
-	// (we can't reliably re-parse nested quotes).
-	if trimmed.contains('"') {
-		return trimmed.to_string();
+	// Strip all double-quotes so that user input like `lightning:"channel close"`
+	// cannot bypass per-term quoting and re-expose the `:` column-filter bug.
+	let trimmed = &trimmed.replace('"', "");
+	let trimmed = trimmed.trim();
+	if trimmed.is_empty() {
+		return "\"\"".to_string();
 	}
 
 	// Split into whitespace-delimited terms.
@@ -1247,6 +1250,40 @@ mod tests {
 			.search(SearchParams { query: "rust-lightning".to_string(), ..Default::default() })
 			.await;
 		assert!(results.is_ok(), "hyphenated search must not fail: {:?}", results.err());
+	}
+
+	#[tokio::test]
+	async fn test_search_fts_quotes_with_colon() {
+		// Regression: `lightning:"channel close"` previously bypassed per-term
+		// quoting, exposing the `:` column-filter operator to FTS5.
+		let store = SqliteStore::open_in_memory().unwrap();
+
+		let doc = test_doc(
+			"github_issue:lightningdevkit/rust-lightning:99",
+			"lightning channel close",
+			"Details about closing a lightning channel",
+		);
+		store.upsert_document(&doc).await.unwrap();
+
+		let results = store
+			.search(SearchParams {
+				query: "lightning:\"channel close\"".to_string(),
+				..Default::default()
+			})
+			.await;
+		assert!(results.is_ok(), "quoted+colon search must not crash: {:?}", results.err());
+	}
+
+	#[test]
+	fn test_build_fts_query_strips_quotes() {
+		// Quotes are stripped so `:` still gets properly quoted.
+		assert_eq!(build_fts_query("lightning:\"channel close\""), "\"lightning:channel\" close");
+
+		// Pure quotes collapse to empty.
+		assert_eq!(build_fts_query("\"\""), "\"\"");
+
+		// Normal input unchanged.
+		assert_eq!(build_fts_query("hello world"), "hello world");
 	}
 
 	#[tokio::test]
