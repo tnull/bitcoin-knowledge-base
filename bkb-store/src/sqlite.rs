@@ -1039,35 +1039,47 @@ fn build_fts_query(input: &str) -> String {
 		return "\"\"".to_string();
 	}
 
-	// If the query already uses FTS5 operators / quoting, pass through as-is.
-	if trimmed.contains('"')
-		|| trimmed.contains("AND")
-		|| trimmed.contains("OR")
-		|| trimmed.contains("NOT")
-		|| trimmed.contains('*')
-	{
+	// If the user already included explicit quoting, pass through as-is
+	// (we can't reliably re-parse nested quotes).
+	if trimmed.contains('"') {
 		return trimmed.to_string();
 	}
 
-	// Split into whitespace-delimited terms and individually quote any term
-	// that contains FTS5 special characters (`:` is the column-filter
-	// operator — passing it unquoted causes "no such column" errors when
-	// queries contain repo names like "lightningdevkit/ldk-node:4463").
+	// Split into whitespace-delimited terms.
 	let terms: Vec<&str> = trimmed.split_whitespace().collect();
 
-	let needs_quoting = |t: &str| t.contains(':') || t.contains('/') || t.contains('#');
+	// A term is a whole-word FTS5 boolean keyword when it exactly matches
+	// one of the reserved words.  Previous substring-based checks caused
+	// false positives for words like "MONITOR" (contains "OR"), "HANDLER"
+	// (contains "AND"), or "CANNOT" (contains "NOT").
+	let is_fts_keyword = |t: &str| matches!(t, "AND" | "OR" | "NOT" | "NEAR");
+
+	// Terms that contain FTS5 syntax characters need quoting so the engine
+	// doesn't interpret them as column-filter (`:`) or other operators.
+	let needs_quoting =
+		|t: &str| t.contains(':') || t.contains('/') || t.contains('#') || t.contains('-');
 
 	let quoted: Vec<String> = terms
 		.iter()
-		.map(|t| if needs_quoting(t) { format!("\"{}\"", t) } else { t.to_string() })
+		.map(|t| {
+			if is_fts_keyword(t) || t.ends_with('*') {
+				// Preserve intentional FTS5 operators and prefix globs.
+				t.to_string()
+			} else if needs_quoting(t) {
+				format!("\"{}\"", t)
+			} else {
+				t.to_string()
+			}
+		})
 		.collect();
 
 	if quoted.len() == 1 {
-		// Single term: use prefix matching (but not if already quoted).
-		if needs_quoting(terms[0]) {
-			quoted[0].clone()
+		let term = &quoted[0];
+		// Single term: use prefix matching unless already quoted/globbed.
+		if term.starts_with('"') || term.ends_with('*') {
+			term.clone()
 		} else {
-			format!("{}*", quoted[0])
+			format!("{}*", term)
 		}
 	} else {
 		// Multiple terms: implicit AND (space-separated).
@@ -1186,6 +1198,55 @@ mod tests {
 		let ctx = store.get_document("github_pr:lightningdevkit/ldk-node:4463").await.unwrap();
 		assert!(ctx.is_some());
 		assert_eq!(ctx.unwrap().document.source_id, "4463");
+	}
+
+	/// Regression test: words containing "OR"/"AND"/"NOT" as substrings
+	/// (e.g. "ChannelMonitor", "ChannelManager") must not trigger the
+	/// pass-through path that skips quoting.
+	#[tokio::test]
+	async fn test_search_fts_operator_substring_false_positive() {
+		let store = SqliteStore::open_in_memory().unwrap();
+
+		let doc = test_doc(
+			"github_issue:lightningdevkit/rust-lightning:1",
+			"ChannelMonitor persistence ordering",
+			"The ChannelManager and ChannelMonitor must be persisted in the right order",
+		);
+		store.upsert_document(&doc).await.unwrap();
+
+		// "ChannelMonitor" contains "OR", "ChannelManager" contains "AND" —
+		// these must NOT cause the query to be passed through raw.
+		let results = store
+			.search(SearchParams {
+				query: "ChannelMonitor ChannelManager ordering".to_string(),
+				..Default::default()
+			})
+			.await;
+		assert!(
+			results.is_ok(),
+			"search with OR/AND substrings must not fail: {:?}",
+			results.err()
+		);
+		assert!(!results.unwrap().results.is_empty());
+	}
+
+	/// Regression test: hyphenated terms like `rust-lightning` must not be
+	/// interpreted as `rust NOT lightning` by FTS5.
+	#[tokio::test]
+	async fn test_search_fts_hyphenated_term() {
+		let store = SqliteStore::open_in_memory().unwrap();
+
+		let doc = test_doc(
+			"github_issue:lightningdevkit/rust-lightning:42",
+			"rust-lightning bug fix",
+			"Fix a bug in rust-lightning channel handling",
+		);
+		store.upsert_document(&doc).await.unwrap();
+
+		let results = store
+			.search(SearchParams { query: "rust-lightning".to_string(), ..Default::default() })
+			.await;
+		assert!(results.is_ok(), "hyphenated search must not fail: {:?}", results.err());
 	}
 
 	#[tokio::test]
