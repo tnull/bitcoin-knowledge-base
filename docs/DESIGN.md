@@ -51,6 +51,7 @@ incremental sync.
 | Source | Repositories | Est. Issues/PRs |
 |---|---|---|
 | Bitcoin Core | `bitcoin/bitcoin` | ~32,900 |
+| Bitcoin Inquisition | `bitcoin-inquisition/bitcoin`, `binana` | ~500 |
 | LDK | `lightningdevkit/rust-lightning`, `ldk-node`, `ldk-sample`, `ldk-server`, `ldk-c-bindings`, `ldk-garbagecollected`, `vss-server`, `vss-client`, `rapid-gossip-sync-server`, `ldk-swift`, `ldk-review-club`, `orange-sdk` | ~4,400 |
 | LND | `lightningnetwork/lnd` | ~7,000 |
 | Core Lightning | `ElementsProject/lightning` | ~6,500 |

@@ -29,6 +29,9 @@ impl Config {
 				("lightningdevkit".to_string(), "orange-sdk".to_string()),
 				// Bitcoin Core
 				("bitcoin".to_string(), "bitcoin".to_string()),
+				// Bitcoin Inquisition
+				("bitcoin-inquisition".to_string(), "bitcoin".to_string()),
+				("bitcoin-inquisition".to_string(), "binana".to_string()),
 				// rust-bitcoin
 				("rust-bitcoin".to_string(), "rust-bitcoin".to_string()),
 				("rust-bitcoin".to_string(), "rust-secp256k1".to_string()),

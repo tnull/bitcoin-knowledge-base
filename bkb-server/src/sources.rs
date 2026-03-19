@@ -139,6 +139,8 @@ footer {
 <div class="repo-list">
 <span class="repo-tag"><a href="https://github.com/bitcoin/bitcoin">bitcoin/bitcoin</a></span>
 <span class="repo-tag"><a href="https://github.com/bitcoin/bips">bitcoin/bips</a></span>
+<span class="repo-tag"><a href="https://github.com/bitcoin-inquisition/bitcoin">bitcoin-inquisition/bitcoin</a></span>
+<span class="repo-tag"><a href="https://github.com/bitcoin-inquisition/binana">bitcoin-inquisition/binana</a></span>
 <span class="repo-tag"><a href="https://github.com/lightning/bolts">lightning/bolts</a></span>
 <span class="repo-tag"><a href="https://github.com/lightning/blips">lightning/blips</a></span>
 <span class="repo-tag"><a href="https://github.com/lightningdevkit/rust-lightning">lightningdevkit/rust-lightning</a></span>

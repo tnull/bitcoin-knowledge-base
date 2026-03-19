@@ -9,7 +9,7 @@ OpenAI Actions (ChatGPT) for fast, precise lookups.
 
 | Source | Adapter | Content |
 |---|---|---|
-| GitHub | Issues, PRs, comments, commits | Bitcoin Core, LDK, LND, Core Lightning, Eclair, rust-bitcoin, BDK, Payjoin, BOLTs, bLIPs, LUDs, NUTs |
+| GitHub | Issues, PRs, comments, commits | Bitcoin Core, Bitcoin Inquisition, LDK, LND, Core Lightning, Eclair, rust-bitcoin, BDK, Payjoin, BOLTs, bLIPs, LUDs, NUTs |
 | Mailing Lists | bitcoin-dev (gnusha.org), lightning-dev (mail-archive.com) | Proposals, discussions, reviews |
 | IRC Logs | gnusha.org | `#bitcoin-core-dev`, `#lightning-dev`, `#bitcoin-wizards` |
 | Delving Bitcoin | Discourse API | Technical discussion forum |
