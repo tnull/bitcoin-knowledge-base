@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use axum::extract::{Path, Query, Request, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
@@ -52,6 +52,24 @@ async fn count_requests(
 	next.run(req).await
 }
 
+/// Middleware that sets security response headers on every response.
+async fn security_headers(req: Request, next: Next) -> Response {
+	let mut resp = next.run(req).await;
+	let headers = resp.headers_mut();
+	headers.insert(
+		"strict-transport-security",
+		HeaderValue::from_static("max-age=63072000; includeSubDomains"),
+	);
+	headers.insert("x-frame-options", HeaderValue::from_static("DENY"));
+	headers.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+	headers.insert("referrer-policy", HeaderValue::from_static("strict-origin-when-cross-origin"));
+	headers.insert(
+		"permissions-policy",
+		HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+	);
+	resp
+}
+
 /// Start the HTTP API server.
 pub async fn serve(state: AppState, addr: SocketAddr) -> Result<()> {
 	let mut app = Router::new()
@@ -85,6 +103,7 @@ pub async fn serve(state: AppState, addr: SocketAddr) -> Result<()> {
 
 	let app = app
 		.layer(middleware::from_fn_with_state(state.clone(), count_requests))
+		.layer(middleware::from_fn(security_headers))
 		.layer(CorsLayer::permissive())
 		.layer(TraceLayer::new_for_http())
 		.with_state(state);
