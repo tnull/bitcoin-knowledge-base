@@ -30,6 +30,11 @@ Add a `bkb` entry to the `mcpServers` object in `~/.claude.json`:
 }
 ```
 
+Or via CLI command:
+```bash
+claude mcp add -t stdio -s user bkb bkb-mcp -e BKB_API_URL="https://bitcoinknowledge.dev"
+```
+
 ## Setup for ChatGPT (OpenAI Actions)
 
 Create a Custom GPT and add an Action with the following schema URL:
