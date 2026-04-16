@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-04-16
+
+### Fixed
+- MCP server no longer sends error responses for JSON-RPC notifications
+  (e.g. `notifications/initialized`), which caused Claude Code to mark
+  the connection as failed.
+
 ## [0.2.0] - 2026-03-19
 
 ### Added
