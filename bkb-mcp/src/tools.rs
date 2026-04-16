@@ -41,6 +41,11 @@ pub async fn run_stdio_server(store: impl KnowledgeStore + 'static) -> Result<()
 			},
 		};
 
+		// JSON-RPC notifications have no `id` and must not receive a response.
+		if request.id.is_none() {
+			continue;
+		}
+
 		let response = handle_request(&store, &request).await;
 		write_response(&mut stdout, &response)?;
 	}
@@ -49,10 +54,13 @@ pub async fn run_stdio_server(store: impl KnowledgeStore + 'static) -> Result<()
 }
 
 async fn handle_request(store: &impl KnowledgeStore, request: &JsonRpcRequest) -> JsonRpcResponse {
+	// Callers ensure `id` is always `Some` (notifications are filtered earlier).
+	let id = request.id.clone().unwrap_or(serde_json::Value::Null);
+
 	match request.method.as_str() {
 		"initialize" => JsonRpcResponse {
 			jsonrpc: "2.0".to_string(),
-			id: request.id.clone(),
+			id,
 			result: Some(serde_json::json!({
 				"protocolVersion": "2024-11-05",
 				"capabilities": {
@@ -65,21 +73,11 @@ async fn handle_request(store: &impl KnowledgeStore, request: &JsonRpcRequest) -
 			})),
 			error: None,
 		},
-		"notifications/initialized" => {
-			// Client acknowledgment, no response needed for notifications
-			// but we still return one since our loop expects it
-			JsonRpcResponse {
-				jsonrpc: "2.0".to_string(),
-				id: request.id.clone(),
-				result: Some(serde_json::Value::Null),
-				error: None,
-			}
-		},
 		"tools/list" => {
 			let tools = tool_definitions();
 			JsonRpcResponse {
 				jsonrpc: "2.0".to_string(),
-				id: request.id.clone(),
+				id,
 				result: Some(serde_json::json!({ "tools": tools })),
 				error: None,
 			}
@@ -87,7 +85,7 @@ async fn handle_request(store: &impl KnowledgeStore, request: &JsonRpcRequest) -
 		"tools/call" => handle_tool_call(store, request).await,
 		_ => JsonRpcResponse {
 			jsonrpc: "2.0".to_string(),
-			id: request.id.clone(),
+			id,
 			result: None,
 			error: Some(JsonRpcError {
 				code: -32601,
@@ -101,6 +99,7 @@ async fn handle_request(store: &impl KnowledgeStore, request: &JsonRpcRequest) -
 async fn handle_tool_call(
 	store: &impl KnowledgeStore, request: &JsonRpcRequest,
 ) -> JsonRpcResponse {
+	let id = request.id.clone().unwrap_or(serde_json::Value::Null);
 	let params = request.params.as_ref();
 	let tool_name = params.and_then(|p| p.get("name")).and_then(|n| n.as_str()).unwrap_or("");
 	let arguments = params
@@ -125,7 +124,7 @@ async fn handle_tool_call(
 	match result {
 		Ok(content) => JsonRpcResponse {
 			jsonrpc: "2.0".to_string(),
-			id: request.id.clone(),
+			id,
 			result: Some(serde_json::json!({
 				"content": [{
 					"type": "text",
@@ -138,7 +137,7 @@ async fn handle_tool_call(
 			error!(tool = tool_name, error = %e, "tool call failed");
 			JsonRpcResponse {
 				jsonrpc: "2.0".to_string(),
-				id: request.id.clone(),
+				id,
 				result: Some(serde_json::json!({
 					"content": [{
 						"type": "text",
@@ -508,7 +507,7 @@ fn write_response(stdout: &mut std::io::Stdout, response: &JsonRpcResponse) -> R
 struct JsonRpcRequest {
 	#[allow(dead_code)]
 	jsonrpc: String,
-	id: serde_json::Value,
+	id: Option<serde_json::Value>,
 	method: String,
 	params: Option<serde_json::Value>,
 }
