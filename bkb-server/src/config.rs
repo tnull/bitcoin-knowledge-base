@@ -94,6 +94,7 @@ impl Config {
 				("bitcoin".to_string(), "bips".to_string()),
 				("lightning".to_string(), "bolts".to_string()),
 				("lightning".to_string(), "blips".to_string()),
+				("BitcoinAndLightningLayerSpecs".to_string(), "lsp".to_string()),
 				("lnurl".to_string(), "luds".to_string()),
 				("cashubtc".to_string(), "nuts".to_string()),
 				// Optech

@@ -143,6 +143,7 @@ footer {
 <span class="repo-tag"><a href="https://github.com/bitcoin-inquisition/binana">bitcoin-inquisition/binana</a></span>
 <span class="repo-tag"><a href="https://github.com/lightning/bolts">lightning/bolts</a></span>
 <span class="repo-tag"><a href="https://github.com/lightning/blips">lightning/blips</a></span>
+<span class="repo-tag"><a href="https://github.com/BitcoinAndLightningLayerSpecs/lsp">BitcoinAndLightningLayerSpecs/lsp</a></span>
 <span class="repo-tag"><a href="https://github.com/lightningdevkit/rust-lightning">lightningdevkit/rust-lightning</a></span>
 <span class="repo-tag"><a href="https://github.com/lightningdevkit/ldk-node">lightningdevkit/ldk-node</a></span>
 <span class="repo-tag"><a href="https://github.com/lightningdevkit/ldk-sample">lightningdevkit/ldk-sample</a></span>

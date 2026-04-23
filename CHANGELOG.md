@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Index `BitcoinAndLightningLayerSpecs/lsp` (LSPS) GitHub repository for
+  historical issues, PRs, and discussions. The repository is archived, but
+  its past technical discussions remain valuable context for Lightning
+  Service Provider specifications.
+
 ## [0.2.1] - 2026-04-16
 
 ### Fixed

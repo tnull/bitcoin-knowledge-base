@@ -62,6 +62,7 @@ incremental sync.
 | BIPs | `bitcoin/bips` | ~400 specs |
 | BOLTs | `lightning/bolts` | ~1,200 issues/PRs |
 | bLIPs | `lightning/blips` | ~50 specs |
+| LSPS | `BitcoinAndLightningLayerSpecs/lsp` | ~350 issues/PRs (archived) |
 | Bitcoin Optech | `bitcoinops/bitcoinops.github.io` | ~400 newsletters, ~150 topics |
 
 ### 4.2 Mailing Lists
