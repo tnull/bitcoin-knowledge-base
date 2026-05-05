@@ -29,6 +29,8 @@ impl Config {
 				("lightningdevkit".to_string(), "orange-sdk".to_string()),
 				// Bitcoin Core
 				("bitcoin".to_string(), "bitcoin".to_string()),
+				("bitcoin-core".to_string(), "bitcoincore.org".to_string()),
+				("bitcoin-core".to_string(), "bitcoin-maintainer-tools".to_string()),
 				// Bitcoin Inquisition
 				("bitcoin-inquisition".to_string(), "bitcoin".to_string()),
 				("bitcoin-inquisition".to_string(), "binana".to_string()),
