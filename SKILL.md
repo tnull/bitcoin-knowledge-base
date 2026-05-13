@@ -1,8 +1,31 @@
+---
+name: bitcoin-knowledge-base
+description: Search Bitcoin and Lightning ecosystem knowledge sources with BKB. Use when the user asks about BIPs, BOLTs, Bitcoin Core PRs/issues/commits, Lightning specs, mailing-list history, IRC logs, Delving Bitcoin discussions, BitcoinTalk, Optech, or historical context for Bitcoin protocol decisions.
+metadata:
+  short-description: Search Bitcoin and Lightning development knowledge
+---
+
 # Bitcoin Knowledge Base (BKB)
 
 Search across the Bitcoin and Lightning development ecosystem: BIPs,
 BOLTs, bLIPs, LUDs, NUTs, GitHub issues/PRs/commits, mailing lists,
 IRC logs, Delving Bitcoin, BitcoinTalk, and Optech newsletters.
+
+## Codex Setup
+
+This install can be wired for Codex through a local stdio MCP proxy:
+
+```toml
+[mcp_servers.bkb]
+command = "python3"
+args = ["/path/to/bitcoin-knowledge-base/scripts/bkb_mcp.py"]
+
+[mcp_servers.bkb.env]
+BKB_API_URL = "https://bitcoinknowledge.dev"
+```
+
+Restart Codex after changing MCP config. Once loaded, the BKB tools are
+available as MCP tools.
 
 ## Setup for Claude (MCP)
 
