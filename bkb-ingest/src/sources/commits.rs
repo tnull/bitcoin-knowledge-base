@@ -89,44 +89,24 @@ impl SyncSource for GitCommitSyncSource {
 		let repo_path =
 			self.cache.ensure_repo(&self.owner, &self.repo, self.github_token.as_deref()).await?;
 
-		// Determine effective cursor: explicit arg > persisted cursor > None
-		let effective_cursor =
-			cursor.map(String::from).or_else(|| self.cache.read_cursor(&self.owner, &self.repo));
-
-		// Walk commits in a blocking task
+		// Legacy SHA/cache cursors could skip history. Repair once, then trust only
+		// the versioned checkpoint committed atomically with documents in SQLite.
+		let cursor = cursor.filter(|value| value.starts_with('{')).map(str::to_owned);
 		let owner = self.owner.clone();
 		let repo_name = self.repo.clone();
 		let page_size = self.page_size;
-		let cursor_clone = effective_cursor.clone();
-
-		let (documents, references, last_sha, has_more, head_sha) =
+		let (documents, references, continuation, has_more, head) =
 			tokio::task::spawn_blocking(move || {
-				walk_commits(&repo_path, cursor_clone.as_deref(), page_size, &owner, &repo_name)
+				walk_commits(&repo_path, cursor.as_deref(), page_size, &owner, &repo_name)
 			})
 			.await??;
-
-		info!(
-			source = %self.name,
-			commits = documents.len(),
-			head = %head_sha,
-			cursor = ?effective_cursor,
-			"fetched commits page"
-		);
-
-		let (next_cursor, final_cursor) = if has_more {
-			// More commits to process -- paginate
-			(last_sha.clone(), None)
-		} else {
-			// All done -- persist HEAD as the cursor for next cycle
-			(None, Some(head_sha))
-		};
-
-		// Persist cursor if we've finished walking all commits
-		if let Some(ref sha) = final_cursor {
-			self.cache.write_cursor(&self.owner, &self.repo, sha)?;
-		}
-
-		Ok(SyncPage { checkpoint: None, documents, references, next_cursor })
+		info!(source = %self.name, commits = documents.len(), head, "fetched commits page");
+		Ok(SyncPage {
+			documents,
+			references,
+			next_cursor: if has_more { continuation.clone() } else { None },
+			checkpoint: if has_more { None } else { continuation },
+		})
 	}
 
 	fn poll_interval(&self) -> Duration {
@@ -139,7 +119,16 @@ impl SyncSource for GitCommitSyncSource {
 	}
 }
 
-/// Walk commits from HEAD backwards, skipping those already processed (cursor).
+#[derive(serde::Serialize, serde::Deserialize)]
+struct GitCursor {
+	version: u8,
+	head: String,
+	baseline: Option<String>,
+	offset: usize,
+	complete: bool,
+}
+
+/// Walk a fixed snapshot, hiding only the previously completed snapshot.
 ///
 /// Returns `(documents, references, last_processed_sha, has_more, head_sha)`.
 fn walk_commits(
@@ -149,14 +138,39 @@ fn walk_commits(
 	let git_repo = git2::Repository::open_bare(repo_path)
 		.with_context(|| format!("failed to open bare repo at {}", repo_path.display()))?;
 
-	// Resolve HEAD: try main, then master, then HEAD
-	let head_oid = resolve_default_branch(&git_repo)?;
+	let current_head = resolve_default_branch(&git_repo)?.to_string();
+	let previous = cursor
+		.filter(|value| value.starts_with('{'))
+		.map(serde_json::from_str::<GitCursor>)
+		.transpose()?;
+	if let Some(ref state) = previous {
+		anyhow::ensure!(state.version == 1, "unsupported Git cursor version");
+	}
+	let mut state = match previous {
+		Some(state) if !state.complete => state,
+		Some(state) => GitCursor {
+			version: 1,
+			head: current_head,
+			baseline: Some(state.head),
+			offset: 0,
+			complete: false,
+		},
+		None => GitCursor {
+			version: 1,
+			head: current_head,
+			baseline: cursor.map(str::to_owned),
+			offset: 0,
+			complete: false,
+		},
+	};
+	let head_oid = git2::Oid::from_str(&state.head)?;
 	let head_sha = head_oid.to_string();
 
 	// If cursor matches HEAD, nothing new
-	if cursor == Some(head_sha.as_str()) {
+	if state.baseline.as_deref() == Some(head_sha.as_str()) {
 		debug!(head = %head_sha, "cursor matches HEAD, nothing to do");
-		return Ok((Vec::new(), Vec::new(), None, false, head_sha));
+		state.complete = true;
+		return Ok((Vec::new(), Vec::new(), Some(serde_json::to_string(&state)?), false, head_sha));
 	}
 
 	let mut revwalk = git_repo.revwalk()?;
@@ -164,7 +178,7 @@ fn walk_commits(
 	revwalk.push(head_oid)?;
 
 	// Hide the cursor commit and all its ancestors
-	if let Some(cursor_sha) = cursor {
+	if let Some(cursor_sha) = state.baseline.as_deref() {
 		if let Ok(cursor_oid) = git2::Oid::from_str(cursor_sha) {
 			if let Err(e) = revwalk.hide(cursor_oid) {
 				warn!(
@@ -180,15 +194,21 @@ fn walk_commits(
 	let source_repo = format!("{}/{}", owner, repo_name);
 	let mut documents = Vec::with_capacity(page_size);
 	let mut references = Vec::new();
-	let mut last_sha = None;
 	let mut count = 0;
 
-	for oid_result in revwalk {
+	for oid_result in revwalk.skip(state.offset) {
 		let oid = oid_result?;
 
 		if count >= page_size {
 			// More commits remain
-			return Ok((documents, references, last_sha, true, head_sha));
+			state.offset += count;
+			return Ok((
+				documents,
+				references,
+				Some(serde_json::to_string(&state)?),
+				true,
+				head_sha,
+			));
 		}
 
 		let commit = git_repo.find_commit(oid)?;
@@ -201,16 +221,22 @@ fn walk_commits(
 			references.push(pr_ref);
 		}
 
-		last_sha = Some(sha);
 		documents.push(doc);
 		count += 1;
 	}
 
-	Ok((documents, references, last_sha, false, head_sha))
+	state.complete = true;
+	state.offset += count;
+	Ok((documents, references, Some(serde_json::to_string(&state)?), false, head_sha))
 }
 
-/// Resolve the default branch OID (main > master > HEAD).
+/// Honor the primary remote's default branch before conventional names.
 fn resolve_default_branch(repo: &git2::Repository) -> Result<git2::Oid> {
+	if let Ok(head) = repo.head() {
+		if let Some(oid) = head.target() {
+			return Ok(oid);
+		}
+	}
 	// Try refs/heads/main first
 	if let Ok(reference) = repo.find_reference("refs/heads/main") {
 		if let Some(oid) = reference.target() {
@@ -718,6 +744,10 @@ mod tests {
 			walk_commits(&repo_path, last_sha.as_deref(), 100, "test-owner", "test-repo").unwrap();
 
 		assert_eq!(page2.len(), 1, "should have 1 remaining commit");
+		assert!(
+			!page1.iter().any(|doc| doc.id == page2[0].id),
+			"continuation must visit older commits, not repeat the newest commit"
+		);
 		assert!(!has_more2);
 	}
 
