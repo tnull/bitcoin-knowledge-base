@@ -24,6 +24,11 @@ pub fn parse_datetime(s: &str) -> Option<DateTime<Utc>> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceType {
+	ForgejoIssue,
+	ForgejoPr,
+	ForgejoComment,
+	ForgejoReview,
+	ForgejoReviewComment,
 	GithubIssue,
 	GithubPr,
 	GithubComment,
@@ -51,6 +56,11 @@ pub enum SourceType {
 impl SourceType {
 	pub fn as_str(&self) -> &'static str {
 		match self {
+			Self::ForgejoIssue => "forgejo_issue",
+			Self::ForgejoPr => "forgejo_pr",
+			Self::ForgejoComment => "forgejo_comment",
+			Self::ForgejoReview => "forgejo_review",
+			Self::ForgejoReviewComment => "forgejo_review_comment",
 			Self::GithubIssue => "github_issue",
 			Self::GithubPr => "github_pr",
 			Self::GithubComment => "github_comment",
@@ -78,6 +88,11 @@ impl SourceType {
 
 	pub fn from_str(s: &str) -> Option<Self> {
 		match s {
+			"forgejo_issue" => Some(Self::ForgejoIssue),
+			"forgejo_pr" => Some(Self::ForgejoPr),
+			"forgejo_comment" => Some(Self::ForgejoComment),
+			"forgejo_review" => Some(Self::ForgejoReview),
+			"forgejo_review_comment" => Some(Self::ForgejoReviewComment),
 			"github_issue" => Some(Self::GithubIssue),
 			"github_pr" => Some(Self::GithubPr),
 			"github_comment" => Some(Self::GithubComment),
@@ -153,7 +168,15 @@ impl Document {
 	/// metadata at ingestion time since the filename is known then and
 	/// cannot be reliably reconstructed from the spec number alone.
 	pub fn url(&self) -> Option<String> {
+		if let Some(url) = self.metadata_url() {
+			return Some(url);
+		}
 		match self.source_type {
+			SourceType::ForgejoIssue
+			| SourceType::ForgejoPr
+			| SourceType::ForgejoComment
+			| SourceType::ForgejoReview
+			| SourceType::ForgejoReviewComment => self.metadata_url(),
 			SourceType::GithubReview | SourceType::GithubReviewComment => self.metadata_url(),
 			SourceType::GithubIssue => Some(format!(
 				"https://github.com/{}/issues/{}",
@@ -442,6 +465,21 @@ mod tests {
 			parent_id: None,
 			metadata: None,
 			seq: None,
+		}
+	}
+
+	#[test]
+	fn forgejo_types_are_distinct_from_github() {
+		for kind in [
+			"forgejo_issue",
+			"forgejo_pr",
+			"forgejo_comment",
+			"forgejo_review",
+			"forgejo_review_comment",
+		] {
+			let parsed = SourceType::from_str(kind);
+			assert!(parsed.is_some(), "Forgejo source type must be recognized: {kind}");
+			assert_eq!(parsed.unwrap().as_str(), kind);
 		}
 	}
 

@@ -51,7 +51,7 @@ impl SyncSource for DelvingSyncSource {
 	) -> Result<SyncPage> {
 		let page: u64 = cursor.and_then(|c| c.parse().ok()).unwrap_or(0);
 
-		rate_limiter.acquire().await;
+		rate_limiter.acquire().await?;
 
 		let latest_url = format!("{}/latest.json?page={}", DELVING_BASE, page);
 		debug!(url = %latest_url, "fetching Delving Bitcoin topics page");
@@ -100,7 +100,7 @@ impl SyncSource for DelvingSyncSource {
 		let mut references = Vec::new();
 
 		for topic_summary in &topics {
-			rate_limiter.acquire().await;
+			rate_limiter.acquire().await?;
 
 			let topic_url = format!("{}/t/{}.json", DELVING_BASE, topic_summary.id);
 			debug!(url = %topic_url, "fetching Delving Bitcoin topic");

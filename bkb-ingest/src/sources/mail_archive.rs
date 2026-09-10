@@ -48,7 +48,7 @@ impl MailArchiveSyncSource {
 		&self, num: u32, rate_limiter: &RateLimiter,
 	) -> Result<Option<ParsedMessage>> {
 		let url = self.message_url(num);
-		rate_limiter.acquire().await;
+		rate_limiter.acquire().await?;
 
 		debug!(url = %url, "fetching mail-archive message");
 

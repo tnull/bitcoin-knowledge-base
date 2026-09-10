@@ -22,6 +22,7 @@ use bkb_ingest::repo_cache::RepoCache;
 use bkb_ingest::sources::bitcointalk::BitcointalkSyncSource;
 use bkb_ingest::sources::commits::GitCommitSyncSource;
 use bkb_ingest::sources::delving::DelvingSyncSource;
+use bkb_ingest::sources::forgejo::{ForgejoClient, ForgejoFeed, ForgejoSyncSource};
 use bkb_ingest::sources::github::{GitHubCommentSyncSource, GitHubIssueSyncSource};
 use bkb_ingest::sources::github_reviews::GitHubReviewSyncSource;
 use bkb_ingest::sources::irc::IrcLogSyncSource;
@@ -50,6 +51,10 @@ struct Cli {
 	/// GitHub API token (also reads GITHUB_TOKEN env var).
 	#[arg(long, env = "GITHUB_TOKEN")]
 	github_token: Option<String>,
+
+	/// Optional token for the Rust Bitcoin Forge API.
+	#[arg(long, env = "FORGEJO_TOKEN")]
+	forgejo_token: Option<String>,
 
 	/// Use a small development subset of sources for fast iteration.
 	#[arg(long, env = "BKB_DEV_SUBSET")]
@@ -119,8 +124,12 @@ async fn main() -> Result<()> {
 
 	// Single-source ingest mode
 	if let Some(ref source_spec) = cli.ingest_only {
-		let repo_cache = Arc::new(create_repo_cache(&cli)?);
-		return run_single_source(source_spec, &cli, &store, &repo_cache).await;
+		let forgejo = Arc::new(ForgejoClient::new(
+			bkb_core::repository::FORGEJO_BASE,
+			cli.forgejo_token.clone(),
+		)?);
+		let repo_cache = Arc::new(create_repo_cache(&cli, Arc::clone(&forgejo))?);
+		return run_single_source(source_spec, &cli, &store, &repo_cache, &forgejo).await;
 	}
 
 	let bind_addr: std::net::SocketAddr = cli.bind.parse()?;
@@ -160,7 +169,11 @@ async fn main() -> Result<()> {
 
 	if !cli.no_ingest {
 		// Start ingestion scheduler
-		let repo_cache = Arc::new(create_repo_cache(&cli)?);
+		let forgejo = Arc::new(ForgejoClient::new(
+			bkb_core::repository::FORGEJO_BASE,
+			cli.forgejo_token.clone(),
+		)?);
+		let repo_cache = Arc::new(create_repo_cache(&cli, Arc::clone(&forgejo))?);
 		let rate_limiter = Arc::new(RateLimiter::new(200));
 		let queue = Arc::new(JobQueue::new(Arc::clone(&rate_limiter), Arc::clone(&store), metrics));
 
@@ -203,6 +216,22 @@ async fn main() -> Result<()> {
 		}
 
 		for (owner, repo) in config.github_review_repos() {
+			for feed in [ForgejoFeed::Issues, ForgejoFeed::Comments, ForgejoFeed::Reviews] {
+				let source = ForgejoSyncSource::new(forgejo.clone(), &owner, &repo, feed);
+				let source_id = source.name().to_owned();
+				let base_interval = source.poll_interval();
+				queue
+					.add_job(SyncJob {
+						source_id,
+						source: Box::new(source),
+						priority: Priority::Medium,
+						cursor: None,
+						next_run: Instant::now(),
+						retry_count: 0,
+						base_interval,
+					})
+					.await;
+			}
 			for inline in [false, true] {
 				let source =
 					GitHubReviewSyncSource::new(&owner, &repo, cli.github_token.clone(), inline);
@@ -462,11 +491,28 @@ async fn main() -> Result<()> {
 /// Run a single source adapter for a limited number of pages, then exit.
 async fn run_single_source(
 	spec: &str, cli: &Cli, store: &Arc<SqliteStore>, repo_cache: &Arc<RepoCache>,
+	forgejo: &Arc<ForgejoClient>,
 ) -> Result<()> {
 	let rate_limiter = Arc::new(RateLimiter::new(200));
 	let token = cli.github_token.clone();
 
-	let source: Box<dyn SyncSource> = if let Some(rest) = spec
+	let source: Box<dyn SyncSource> = if let Some(rest) = spec.strip_prefix("forgejo:") {
+		let (repo, kind) = rest.rsplit_once(':').unwrap_or((rest, "issues"));
+		let repo = repo.strip_prefix("git.rust-bitcoin.org/").unwrap_or(repo);
+		anyhow::ensure!(
+			bkb_core::repository::is_migrated(repo),
+			"Forgejo repository is not configured"
+		);
+		let (owner, repo) =
+			repo.split_once('/').ok_or_else(|| anyhow::anyhow!("expected owner/repo"))?;
+		let feed = match kind {
+			"issues" => ForgejoFeed::Issues,
+			"comments" => ForgejoFeed::Comments,
+			"reviews" => ForgejoFeed::Reviews,
+			_ => anyhow::bail!("expected issues, comments, or reviews"),
+		};
+		Box::new(ForgejoSyncSource::new(Arc::clone(forgejo), owner, repo, feed))
+	} else if let Some(rest) = spec
 		.strip_prefix("github-reviews:")
 		.or_else(|| spec.strip_prefix("github-review-comments:"))
 	{
@@ -531,7 +577,19 @@ async fn run_single_source(
 	let mut total_docs = 0u32;
 
 	for page in 0..cli.limit_pages {
-		let result = source.fetch_page(cursor.as_deref(), &rate_limiter).await?;
+		let result = loop {
+			match source.fetch_page(cursor.as_deref(), &rate_limiter).await {
+				Ok(page) => break page,
+				Err(e) => {
+					if let Some(deferred) = e.downcast_ref::<bkb_ingest::rate_limiter::Deferred>() {
+						info!(seconds = deferred.0.as_secs_f64(), "waiting for source quota");
+						tokio::time::sleep(deferred.0).await;
+					} else {
+						return Err(e);
+					}
+				},
+			}
+		};
 		let doc_count = result.documents.len();
 		total_docs += doc_count as u32;
 
@@ -557,9 +615,14 @@ async fn run_single_source(
 }
 
 /// Create a `RepoCache` from CLI arguments. Only called when ingestion is enabled.
-fn create_repo_cache(cli: &Cli) -> Result<RepoCache> {
+fn create_repo_cache(cli: &Cli, forgejo: Arc<ForgejoClient>) -> Result<RepoCache> {
 	let cache_dir = expand_tilde(&cli.cache_dir);
-	RepoCache::new(cache_dir, cli.max_cache_gb * 1024 * 1024 * 1024, cli.max_repo_size_mb * 1024)
+	Ok(RepoCache::new(
+		cache_dir,
+		cli.max_cache_gb * 1024 * 1024 * 1024,
+		cli.max_repo_size_mb * 1024,
+	)?
+	.with_forgejo_client(forgejo))
 }
 
 /// Expand `~` at the start of a path to the user's home directory.

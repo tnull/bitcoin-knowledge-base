@@ -77,8 +77,10 @@ impl SyncSource for GitCommitSyncSource {
 				Err(e) => {
 					// Reset so the check is retried on the next run
 					self.size_checked.store(false, Ordering::Relaxed);
-					// Propagate as an error so the job queue applies backoff
-					anyhow::bail!("repo size check failed for {}/{}: {}", self.owner, self.repo, e);
+					// Preserve quota deferrals so the queue uses the server's retry time.
+					return Err(e).with_context(|| {
+						format!("repo size check failed for {}/{}", self.owner, self.repo)
+					});
 				},
 			}
 		}
@@ -280,6 +282,7 @@ fn build_commit_document(
 	};
 
 	let metadata = serde_json::json!({
+		"url": format!("{}/commit/{sha}", bkb_core::repository::primary_git_url(source_repo).trim_end_matches(".git")),
 		"is_merge": is_merge,
 		"parents": parents,
 		"files_changed": files_changed,
@@ -440,6 +443,11 @@ fn git_time_to_chrono(time: &git2::Time) -> DateTime<Utc> {
 fn extract_merge_pr_ref(
 	commit: &git2::Commit, doc_id: &str, source_repo: &str,
 ) -> Option<Reference> {
+	// Number spaces can diverge after migration. PR API merge SHAs and explicit
+	// links provide evidence; a bare merge-message number does not.
+	if bkb_core::repository::is_migrated(source_repo) {
+		return None;
+	}
 	use regex::Regex;
 
 	thread_local! {
@@ -468,6 +476,43 @@ fn extract_merge_pr_ref(
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[tokio::test]
+	async fn metadata_quota_preserves_typed_deferral() {
+		let temp = tempfile::tempdir().unwrap();
+		let cache = Arc::new(RepoCache::new(temp.path().into(), u64::MAX, u64::MAX).unwrap());
+		let source = GitCommitSyncSource::new("test", "repo", cache, None);
+		let rate = RateLimiter::new(0);
+		let mut headers = reqwest::header::HeaderMap::new();
+		headers.insert("x-ratelimit-remaining", "0".parse().unwrap());
+		headers.insert(
+			"x-ratelimit-reset",
+			(Utc::now().timestamp() + 3600).to_string().parse().unwrap(),
+		);
+		rate.update_from_response(&headers);
+		let error = source.fetch_page(None, &rate).await.err().expect("quota must defer");
+		assert!(
+			error.downcast_ref::<crate::rate_limiter::Deferred>().is_some(),
+			"metadata quotas must defer without ordinary retry backoff: {error:#}"
+		);
+	}
+
+	#[test]
+	fn migrated_commit_keeps_id_and_links_to_authoritative_forge() {
+		let (_dir, path) = create_test_repo();
+		let (docs, _, _, _, _) =
+			walk_commits(&path, None, 100, "lightningdevkit", "rust-lightning").unwrap();
+		assert!(!docs.is_empty());
+		for doc in docs {
+			assert!(doc.id.starts_with("commit:lightningdevkit/rust-lightning:"));
+			assert!(
+				doc.url().unwrap().starts_with(
+					"https://git.rust-bitcoin.org/lightningdevkit/rust-lightning/commit/"
+				),
+				"migrated commits must link to the authoritative forge"
+			);
+		}
+	}
 
 	/// Create a temp bare repo with a few commits for testing.
 	fn create_test_repo() -> (tempfile::TempDir, std::path::PathBuf) {

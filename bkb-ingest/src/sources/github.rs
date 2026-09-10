@@ -58,7 +58,7 @@ impl SyncSource for GitHubIssueSyncSource {
 		&self, cursor: Option<&str>, rate_limiter: &RateLimiter,
 	) -> Result<SyncPage> {
 		let mut window = super::http::PollCursor::resume(cursor)?;
-		rate_limiter.acquire().await;
+		rate_limiter.acquire().await?;
 		let mut request = self
 			.build_request(&format!("{}/repos/{}/{}/issues", self.api_base, self.owner, self.repo,))
 			.query(&[("state", "all"), ("sort", "updated"), ("direction", "asc")])
@@ -173,7 +173,7 @@ impl SyncSource for GitHubCommentSyncSource {
 		&self, cursor: Option<&str>, rate_limiter: &RateLimiter,
 	) -> Result<SyncPage> {
 		let mut window = super::http::PollCursor::resume(cursor)?;
-		rate_limiter.acquire().await;
+		rate_limiter.acquire().await?;
 		let mut request = self
 			.build_request(&format!(
 				"{}/repos/{}/{}/issues/comments",

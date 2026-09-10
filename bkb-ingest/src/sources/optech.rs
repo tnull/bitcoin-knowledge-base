@@ -31,7 +31,7 @@ impl SyncSource for OptechNewsletterSyncSource {
 	async fn fetch_page(
 		&self, cursor: Option<&str>, rate_limiter: &RateLimiter,
 	) -> Result<SyncPage> {
-		rate_limiter.acquire().await;
+		rate_limiter.acquire().await?;
 
 		let page: u32 = cursor.and_then(|c| c.parse().ok()).unwrap_or(1);
 
@@ -77,7 +77,7 @@ impl SyncSource for OptechNewsletterSyncSource {
 
 			// Fetch raw content
 			if let Some(ref download_url) = entry.download_url {
-				rate_limiter.acquire().await;
+				rate_limiter.acquire().await?;
 
 				let resp =
 					self.client.get(download_url).header("User-Agent", "bkb/0.1").send().await;

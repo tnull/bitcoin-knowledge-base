@@ -307,6 +307,11 @@ fn find_commit_path() -> serde_json::Value {
 fn source_type_enum() -> serde_json::Value {
 	serde_json::json!([
 		"github_issue",
+		"forgejo_issue",
+		"forgejo_pr",
+		"forgejo_comment",
+		"forgejo_review",
+		"forgejo_review_comment",
 		"github_pr",
 		"github_comment",
 		"github_review",

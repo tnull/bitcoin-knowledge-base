@@ -56,7 +56,7 @@ impl SyncSource for IrcLogSyncSource {
 	async fn fetch_page(
 		&self, cursor: Option<&str>, rate_limiter: &RateLimiter,
 	) -> Result<SyncPage> {
-		rate_limiter.acquire().await;
+		rate_limiter.acquire().await?;
 
 		let date = Self::parse_cursor(cursor)?;
 		let today = Utc::now().date_naive();

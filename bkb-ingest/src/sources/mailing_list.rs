@@ -67,7 +67,7 @@ impl MailingListSyncSource {
 
 	/// Fetch and parse the Atom feed, returning a list of entries.
 	async fn fetch_feed(&self, url: &str, rate_limiter: &RateLimiter) -> Result<Vec<AtomEntry>> {
-		rate_limiter.acquire().await;
+		rate_limiter.acquire().await?;
 
 		debug!(url = %url, "fetching mailing list Atom feed");
 
@@ -95,7 +95,7 @@ impl MailingListSyncSource {
 
 	/// Fetch the raw email text for a single message.
 	async fn fetch_raw_message(&self, url: &str, rate_limiter: &RateLimiter) -> Result<String> {
-		rate_limiter.acquire().await;
+		rate_limiter.acquire().await?;
 
 		debug!(url = %url, "fetching raw mailing list message");
 

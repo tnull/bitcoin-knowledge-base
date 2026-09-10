@@ -199,6 +199,11 @@ impl JobQueue {
 				}
 			},
 			Err(e) => {
+				if let Some(deferred) = e.downcast_ref::<crate::rate_limiter::Deferred>() {
+					job.next_run = Instant::now() + deferred.0;
+					self.jobs.lock().await.push(job);
+					return;
+				}
 				// Record metrics for failed run
 				if let Some(ref metrics) = self.metrics {
 					metrics.record_job_run(

@@ -1,6 +1,7 @@
 pub mod bitcointalk;
 pub mod commits;
 pub mod delving;
+pub mod forgejo;
 pub mod github;
 pub mod github_reviews;
 pub(crate) mod http;

@@ -31,7 +31,7 @@ async fn discover_spec_files(
 	client: &Client, owner: &str, repo: &str, branch: &str, pattern: &Regex, token: Option<&str>,
 	rate_limiter: &RateLimiter,
 ) -> Result<Vec<SpecFile>> {
-	rate_limiter.acquire().await;
+	rate_limiter.acquire().await?;
 
 	let url =
 		format!("https://api.github.com/repos/{}/{}/git/trees/{}?recursive=1", owner, repo, branch);
@@ -139,7 +139,7 @@ impl BipSyncSource {
 	async fn fetch_bip_by_file(
 		&self, file: &SpecFile, rate_limiter: &RateLimiter,
 	) -> Result<Option<Document>> {
-		rate_limiter.acquire().await;
+		rate_limiter.acquire().await?;
 
 		let url =
 			format!("https://raw.githubusercontent.com/bitcoin/bips/master/{}", file.filename);
@@ -283,7 +283,7 @@ impl BoltSyncSource {
 	async fn fetch_bolt_by_file(
 		&self, file: &SpecFile, rate_limiter: &RateLimiter,
 	) -> Result<Option<Document>> {
-		rate_limiter.acquire().await;
+		rate_limiter.acquire().await?;
 
 		let url =
 			format!("https://raw.githubusercontent.com/lightning/bolts/master/{}", file.filename);
@@ -418,7 +418,7 @@ impl BlipSyncSource {
 	async fn fetch_blip_by_file(
 		&self, file: &SpecFile, rate_limiter: &RateLimiter,
 	) -> Result<Option<Document>> {
-		rate_limiter.acquire().await;
+		rate_limiter.acquire().await?;
 
 		let url =
 			format!("https://raw.githubusercontent.com/lightning/blips/master/{}", file.filename);
@@ -554,7 +554,7 @@ impl LudSyncSource {
 	async fn fetch_lud_by_file(
 		&self, file: &SpecFile, rate_limiter: &RateLimiter,
 	) -> Result<Option<Document>> {
-		rate_limiter.acquire().await;
+		rate_limiter.acquire().await?;
 
 		let url = format!("https://raw.githubusercontent.com/lnurl/luds/luds/{}", file.filename);
 
@@ -689,7 +689,7 @@ impl NutSyncSource {
 	async fn fetch_nut_by_file(
 		&self, file: &SpecFile, rate_limiter: &RateLimiter,
 	) -> Result<Option<Document>> {
-		rate_limiter.acquire().await;
+		rate_limiter.acquire().await?;
 
 		let url = format!("https://raw.githubusercontent.com/cashubtc/nuts/main/{}", file.filename);
 

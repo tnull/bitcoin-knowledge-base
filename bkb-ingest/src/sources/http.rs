@@ -25,6 +25,8 @@ pub(crate) struct PollCursor {
 	pub child_page: u32,
 	#[serde(default)]
 	pub more_parents: bool,
+	#[serde(default)]
+	pub review_ids: Vec<u64>,
 }
 
 impl PollCursor {
@@ -64,6 +66,7 @@ impl PollCursor {
 			pending: vec![],
 			child_page: 1,
 			more_parents: true,
+			review_ids: vec![],
 		}
 	}
 
@@ -101,11 +104,25 @@ pub(crate) fn more_pages(headers: &HeaderMap, page: u32, limit: u32, len: usize)
 	len >= limit as usize
 }
 
+pub(crate) fn retry_after(headers: &HeaderMap) -> Duration {
+	let value = headers.get("retry-after").and_then(|h| h.to_str().ok());
+	let seconds = value
+		.and_then(|s| s.parse::<u64>().ok())
+		.or_else(|| {
+			value.and_then(|s| DateTime::parse_from_rfc2822(s).ok()).map(|date| {
+				date.with_timezone(&Utc).signed_duration_since(Utc::now()).num_seconds().max(1)
+					as u64
+			})
+		})
+		.unwrap_or(60);
+	Duration::from_secs(seconds.max(1))
+}
+
 pub(crate) async fn github_get(
 	client: &Client, base: &str, repo: &str, path: &str, token: Option<&str>,
 	rate_limiter: &RateLimiter, query: &[(String, String)], page: u32,
 ) -> Result<(Vec<Value>, bool)> {
-	rate_limiter.acquire().await;
+	rate_limiter.acquire().await?;
 	let mut request = client
 		.get(format!("{base}/repos/{repo}/{path}"))
 		.header("User-Agent", "bkb/0.2")
@@ -117,6 +134,11 @@ pub(crate) async fn github_get(
 	}
 	let response = request.send().await.context("GitHub request failed")?;
 	rate_limiter.update_from_response(response.headers());
+	if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
+		|| response.headers().contains_key("retry-after")
+	{
+		return Err(crate::rate_limiter::Deferred(retry_after(response.headers())).into());
+	}
 	let response = response.error_for_status().context("GitHub API error")?;
 	let headers = response.headers().clone();
 	let items: Vec<Value> = response.json().await.context("invalid GitHub list response")?;

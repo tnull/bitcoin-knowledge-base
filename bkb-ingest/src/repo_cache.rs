@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use anyhow::{Context, Result};
@@ -9,6 +9,7 @@ use serde::Deserialize;
 use tracing::{debug, info, warn};
 
 use crate::rate_limiter::RateLimiter;
+use crate::sources::forgejo::ForgejoClient;
 
 const GITHUB_API_BASE: &str = "https://api.github.com";
 
@@ -19,6 +20,7 @@ pub struct RepoCache {
 	max_repo_size_kb: u64,
 	access_log: Mutex<HashMap<String, SystemTime>>,
 	client: Client,
+	forgejo: Arc<ForgejoClient>,
 }
 
 impl RepoCache {
@@ -64,7 +66,14 @@ impl RepoCache {
 			max_repo_size_kb,
 			access_log: Mutex::new(access_log),
 			client: Client::new(),
+			forgejo: Arc::new(ForgejoClient::new(bkb_core::repository::FORGEJO_BASE, None)?),
 		})
+	}
+
+	/// Share Forgejo authentication and request limits with conversation ingestion.
+	pub fn with_forgejo_client(mut self, client: Arc<ForgejoClient>) -> Self {
+		self.forgejo = client;
+		self
 	}
 
 	/// Return the path where a bare clone for `owner/repo` would live.
@@ -72,35 +81,41 @@ impl RepoCache {
 		self.cache_dir.join(owner).join(format!("{}.git", repo))
 	}
 
-	/// Check the repo size via GitHub API. Returns size in KB.
+	/// Check the repo size via its current forge API. Returns size in KB.
 	/// Errors if the repo exceeds `max_repo_size_kb`.
 	pub async fn check_repo_size(
 		&self, owner: &str, repo: &str, token: Option<&str>, rate_limiter: &RateLimiter,
 	) -> Result<u64> {
-		rate_limiter.acquire().await;
+		let migrated = bkb_core::repository::is_migrated(&format!("{owner}/{repo}"));
+		let meta: RepoMeta = if migrated {
+			serde_json::from_value(
+				self.forgejo.repository_metadata(&format!("{owner}/{repo}")).await?,
+			)
+			.context("failed to parse Forgejo repo metadata")?
+		} else {
+			rate_limiter.acquire().await?;
+			let url = format!("{GITHUB_API_BASE}/repos/{owner}/{repo}");
+			let mut req = self
+				.client
+				.get(&url)
+				.header("User-Agent", "bkb/0.1")
+				.header("Accept", "application/vnd.github+json");
 
-		let url = format!("{}/repos/{}/{}", GITHUB_API_BASE, owner, repo);
-		let mut req = self
-			.client
-			.get(&url)
-			.header("User-Agent", "bkb/0.1")
-			.header("Accept", "application/vnd.github+json");
+			if let Some(token) = token {
+				req = req.header("Authorization", format!("Bearer {}", token));
+			}
 
-		if let Some(token) = token {
-			req = req.header("Authorization", format!("Bearer {}", token));
-		}
+			let response = req.send().await.context("failed to fetch repo metadata")?;
+			rate_limiter.update_from_response(response.headers());
 
-		let response = req.send().await.context("failed to fetch repo metadata")?;
-		rate_limiter.update_from_response(response.headers());
+			let status = response.status();
+			if !status.is_success() {
+				let body = response.text().await.unwrap_or_default();
+				anyhow::bail!("GitHub API returned {} for {}/{}: {}", status, owner, repo, body);
+			}
 
-		let status = response.status();
-		if !status.is_success() {
-			let body = response.text().await.unwrap_or_default();
-			anyhow::bail!("GitHub API returned {} for {}/{}: {}", status, owner, repo, body);
-		}
-
-		let meta: GitHubRepoMeta =
-			response.json().await.context("failed to parse repo metadata")?;
+			response.json().await.context("failed to parse repo metadata")?
+		};
 
 		if meta.size > self.max_repo_size_kb {
 			anyhow::bail!(
@@ -123,7 +138,8 @@ impl RepoCache {
 	) -> Result<PathBuf> {
 		let path = self.repo_path(owner, repo);
 		let key = format!("{}/{}", owner, repo);
-		let token_owned = token.map(String::from);
+		let token_owned =
+			token.filter(|_| !bkb_core::repository::is_migrated(&key)).map(String::from);
 
 		if path.exists() {
 			// Try to open and fetch; if corrupted, delete and re-clone
@@ -136,29 +152,9 @@ impl RepoCache {
 			})
 			.await?;
 
-			match result {
-				Ok(()) => {
-					debug!(repo = %key, "fetched updates for cached repo");
-				},
-				Err(e) => {
-					warn!(repo = %key, error = %e, "cached repo corrupted, re-cloning");
-					let _ = std::fs::remove_dir_all(&path);
-					let clone_path = path.clone();
-					let clone_token = token_owned;
-					let clone_owner = owner.to_string();
-					let clone_repo = repo.to_string();
-					tokio::task::spawn_blocking(move || {
-						Self::clone_bare(
-							&clone_path,
-							&clone_owner,
-							&clone_repo,
-							clone_token.as_deref(),
-						)
-					})
-					.await??;
-					info!(repo = %key, "re-cloned after corruption");
-				},
-			}
+			// A network or authentication failure does not imply cache corruption.
+			result?;
+			debug!(repo = %key, "fetched updates for cached repo");
 		} else {
 			// Evict if needed, then clone
 			self.evict_if_needed()?;
@@ -206,7 +202,7 @@ impl RepoCache {
 
 	/// Clone a repo as a bare clone. Runs in a blocking context.
 	fn clone_bare(path: &Path, owner: &str, repo: &str, token: Option<&str>) -> Result<()> {
-		let url = format!("https://github.com/{}/{}.git", owner, repo);
+		let url = bkb_core::repository::primary_git_url(&format!("{owner}/{repo}"));
 
 		let mut callbacks = git2::RemoteCallbacks::new();
 		if let Some(token) = token {
@@ -249,6 +245,9 @@ impl RepoCache {
 		let git_repo = git2::Repository::open_bare(path)
 			.with_context(|| format!("failed to open bare repo at {}", path.display()))?;
 
+		let url = bkb_core::repository::primary_git_url(&format!("{owner}/{repo}"));
+		git_repo.remote_set_url("origin", &url)?;
+
 		let mut remote = git_repo
 			.find_remote("origin")
 			.with_context(|| format!("no 'origin' remote in {}/{}", owner, repo))?;
@@ -272,6 +271,14 @@ impl RepoCache {
 		remote
 			.fetch(&refspec_strs, Some(&mut fetch_opts), None)
 			.with_context(|| format!("failed to fetch {}/{}", owner, repo))?;
+
+		if let Ok(branch) = remote.default_branch() {
+			if let Some(branch) = branch.as_str() {
+				if git_repo.find_reference(branch).is_ok() {
+					git_repo.set_head(branch)?;
+				}
+			}
+		}
 
 		Ok(())
 	}
@@ -348,13 +355,150 @@ pub fn dir_size(path: &Path) -> u64 {
 }
 
 #[derive(Debug, Deserialize)]
-struct GitHubRepoMeta {
+struct RepoMeta {
 	size: u64, // KB
 }
 
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+	async fn forgejo_metadata_server(
+		status: &'static str, headers: &'static str, body: &'static str,
+	) -> (String, tokio::task::JoinHandle<String>) {
+		let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+		let addr = listener.local_addr().unwrap();
+		let server = tokio::spawn(async move {
+			let (mut stream, _) = listener.accept().await.unwrap();
+			let mut request = Vec::new();
+			while !request.windows(4).any(|end| end == b"\r\n\r\n") {
+				let mut bytes = [0; 1024];
+				let count = stream.read(&mut bytes).await.unwrap();
+				assert_ne!(count, 0);
+				request.extend_from_slice(&bytes[..count]);
+			}
+			let request = String::from_utf8(request).unwrap();
+			let status = if request
+				.to_ascii_lowercase()
+				.contains("authorization: token forgejo-test-token\r\n")
+			{
+				status
+			} else {
+				"401 Unauthorized"
+			};
+			stream.write_all(format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{headers}\r\n{body}", body.len()).as_bytes()).await.unwrap();
+			request
+		});
+		(format!("http://{addr}"), server)
+	}
+
+	#[tokio::test]
+	async fn migrated_metadata_uses_forgejo_credentials() {
+		let (base, server) = forgejo_metadata_server("200 OK", "", r#"{"size":123}"#).await;
+		let tmp = tempfile::tempdir().unwrap();
+		let forgejo =
+			Arc::new(ForgejoClient::new(&base, Some("forgejo-test-token".into())).unwrap());
+		let cache =
+			RepoCache::new(tmp.path().into(), u64::MAX, 4096).unwrap().with_forgejo_client(forgejo);
+		let github_quota = RateLimiter::new(0);
+		let mut headers = reqwest::header::HeaderMap::new();
+		headers.insert("x-ratelimit-remaining", "0".parse().unwrap());
+		headers.insert("x-ratelimit-reset", "4000000000".parse().unwrap());
+		github_quota.update_from_response(&headers);
+		let result = cache
+			.check_repo_size(
+				"lightningdevkit",
+				"rust-lightning",
+				Some("github-test-token"),
+				&github_quota,
+			)
+			.await;
+		let request = server.await.unwrap();
+		assert!(result.is_ok(), "authenticated Forgejo metadata must succeed: {result:?}");
+		assert_eq!(result.unwrap(), 123);
+		assert!(
+			request.starts_with("GET /api/v1/repos/lightningdevkit/rust-lightning HTTP/1.1\r\n"),
+			"metadata path must not gain a trailing slash: {request}"
+		);
+		assert!(request
+			.to_ascii_lowercase()
+			.contains("authorization: token forgejo-test-token\r\n"));
+		assert!(
+			!request.contains("github-test-token"),
+			"GitHub credentials must never reach Forgejo"
+		);
+	}
+
+	#[tokio::test]
+	async fn migrated_metadata_keeps_the_repository_size_limit() {
+		let (base, server) = forgejo_metadata_server("200 OK", "", r#"{"size":123}"#).await;
+		let tmp = tempfile::tempdir().unwrap();
+		let forgejo =
+			Arc::new(ForgejoClient::new(&base, Some("forgejo-test-token".into())).unwrap());
+		let cache =
+			RepoCache::new(tmp.path().into(), u64::MAX, 100).unwrap().with_forgejo_client(forgejo);
+		let error = cache
+			.check_repo_size(
+				"lightningdevkit",
+				"rust-lightning",
+				Some("github-test-token"),
+				&RateLimiter::new(0),
+			)
+			.await
+			.unwrap_err();
+		assert!(
+			error.to_string().contains("123 KB, exceeding limit of 100 KB"),
+			"size gating must still reject oversized repositories: {error}"
+		);
+		server.await.unwrap();
+	}
+
+	#[tokio::test]
+	async fn migrated_metadata_and_feeds_share_retry_after() {
+		use crate::rate_limiter::Deferred;
+		use crate::sources::forgejo::{ForgejoFeed, ForgejoSyncSource};
+		use crate::sources::SyncSource;
+		let (base, server) =
+			forgejo_metadata_server("429 Too Many Requests", "Retry-After: 120\r\n", "{}").await;
+		let tmp = tempfile::tempdir().unwrap();
+		let forgejo =
+			Arc::new(ForgejoClient::new(&base, Some("forgejo-test-token".into())).unwrap());
+		let cache = RepoCache::new(tmp.path().into(), u64::MAX, 4096)
+			.unwrap()
+			.with_forgejo_client(Arc::clone(&forgejo));
+		let quota = RateLimiter::new(0);
+		let error = cache
+			.check_repo_size("lightningdevkit", "rust-lightning", Some("github-test-token"), &quota)
+			.await
+			.unwrap_err();
+		assert_eq!(
+			error.downcast_ref::<Deferred>().unwrap().0,
+			std::time::Duration::from_secs(120)
+		);
+		server.await.unwrap();
+		// The server has closed. Both paths must defer locally using the shared
+		// deadline, without attempting another network request.
+		let source = ForgejoSyncSource::new(
+			forgejo,
+			"lightningdevkit",
+			"rust-lightning",
+			ForgejoFeed::Issues,
+		);
+		let feed_error = source.fetch_page(None, &quota).await.err().unwrap();
+		assert!(
+			feed_error.downcast_ref::<Deferred>().is_some(),
+			"feed must share metadata backoff: {feed_error:#}"
+		);
+		let metadata_error = cache
+			.check_repo_size("lightningdevkit", "rust-lightning", None, &quota)
+			.await
+			.unwrap_err();
+		assert!(
+			metadata_error.downcast_ref::<Deferred>().is_some(),
+			"metadata must retain shared backoff: {metadata_error:#}"
+		);
+	}
 
 	#[test]
 	fn test_repo_path_structure() {

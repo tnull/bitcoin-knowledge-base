@@ -10,6 +10,7 @@ OpenAI Actions (ChatGPT) for fast, precise lookups.
 | Source | Adapter | Content |
 |---|---|---|
 | GitHub | Issues, PRs, comments, commits | Bitcoin Core, Bitcoin Inquisition, LDK, LND, Core Lightning, Eclair, rust-bitcoin, BDK, Payjoin, BOLTs, bLIPs, LSPS, LUDs, NUTs |
+| Forgejo | Issues, PRs, comments, reviews, commits | Migrated LDK and rust-bitcoin repositories on git.rust-bitcoin.org |
 | Mailing Lists | bitcoin-dev (gnusha.org), lightning-dev (mail-archive.com) | Proposals, discussions, reviews |
 | IRC Logs | gnusha.org | `#bitcoin-core-dev`, `#lightning-dev`, `#bitcoin-wizards` |
 | Delving Bitcoin | Discourse API | Technical discussion forum |
@@ -49,6 +50,9 @@ cargo run -p bkb-server -- --ingest-only github:lightningdevkit/ldk-sample --lim
 # Backfill PR reviews or inline review comments (resumable in the selected DB)
 cargo run -p bkb-server -- --ingest-only github-reviews:lightningdevkit/ldk-sample --limit-pages 10
 cargo run -p bkb-server -- --ingest-only github-review-comments:lightningdevkit/ldk-sample --limit-pages 10
+
+# Forgejo: issues, comments, or reviews (includes inline review comments)
+cargo run -p bkb-server -- --ingest-only forgejo:lightningdevkit/ldk-sample:reviews --limit-pages 10
 
 # API-only mode (no ingestion)
 cargo run -p bkb-server -- --no-ingest --db bkb.db
