@@ -2,6 +2,8 @@ pub mod bitcointalk;
 pub mod commits;
 pub mod delving;
 pub mod github;
+pub mod github_reviews;
+pub(crate) mod http;
 pub mod irc;
 pub mod mail_archive;
 pub mod mailing_list;
@@ -19,6 +21,8 @@ use crate::rate_limiter::RateLimiter;
 
 /// A page of results from a sync source.
 pub struct SyncPage {
+	/// Checkpoint for the next poll when this page completes a sync cycle.
+	pub checkpoint: Option<String>,
 	/// Documents fetched in this page.
 	pub documents: Vec<Document>,
 	/// References extracted during fetch (source-level, e.g., parent_id links).

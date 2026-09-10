@@ -23,6 +23,7 @@ use bkb_ingest::sources::bitcointalk::BitcointalkSyncSource;
 use bkb_ingest::sources::commits::GitCommitSyncSource;
 use bkb_ingest::sources::delving::DelvingSyncSource;
 use bkb_ingest::sources::github::{GitHubCommentSyncSource, GitHubIssueSyncSource};
+use bkb_ingest::sources::github_reviews::GitHubReviewSyncSource;
 use bkb_ingest::sources::irc::IrcLogSyncSource;
 use bkb_ingest::sources::mail_archive::MailArchiveSyncSource;
 use bkb_ingest::sources::mailing_list::MailingListSyncSource;
@@ -180,7 +181,6 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: issue_interval,
-					pages_since_persist: 0,
 				})
 				.await;
 
@@ -196,11 +196,30 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: comment_interval,
-					pages_since_persist: 0,
 				})
 				.await;
 
 			info!(repo = %format!("{}/{}", owner, repo), "registered GitHub sync sources");
+		}
+
+		for (owner, repo) in config.github_review_repos() {
+			for inline in [false, true] {
+				let source =
+					GitHubReviewSyncSource::new(&owner, &repo, cli.github_token.clone(), inline);
+				let source_id = source.name().to_owned();
+				let base_interval = source.poll_interval();
+				queue
+					.add_job(SyncJob {
+						source_id,
+						source: Box::new(source),
+						priority: Priority::Low,
+						cursor: None,
+						next_run: Instant::now(),
+						retry_count: 0,
+						base_interval,
+					})
+					.await;
+			}
 		}
 
 		// Register IRC sources
@@ -216,7 +235,6 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: irc_interval,
-					pages_since_persist: 0,
 				})
 				.await;
 			info!(channel = %channel, "registered IRC sync source");
@@ -235,7 +253,6 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: delving_interval,
-					pages_since_persist: 0,
 				})
 				.await;
 			info!("registered Delving Bitcoin sync source");
@@ -254,7 +271,6 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: ml_interval,
-					pages_since_persist: 0,
 				})
 				.await;
 			info!("registered bitcoindev mailing list sync source");
@@ -273,7 +289,6 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: ld_interval,
-					pages_since_persist: 0,
 				})
 				.await;
 			info!("registered lightning-dev mail-archive sync source");
@@ -292,7 +307,6 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: bip_interval,
-					pages_since_persist: 0,
 				})
 				.await;
 			info!("registered BIP sync source");
@@ -308,7 +322,6 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: bolt_interval,
-					pages_since_persist: 0,
 				})
 				.await;
 			info!("registered BOLT sync source");
@@ -324,7 +337,6 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: blip_interval,
-					pages_since_persist: 0,
 				})
 				.await;
 			info!("registered bLIP sync source");
@@ -340,7 +352,6 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: lud_interval,
-					pages_since_persist: 0,
 				})
 				.await;
 			info!("registered LUD sync source");
@@ -356,7 +367,6 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: nut_interval,
-					pages_since_persist: 0,
 				})
 				.await;
 			info!("registered NUT sync source");
@@ -375,7 +385,6 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: optech_interval,
-					pages_since_persist: 0,
 				})
 				.await;
 			info!("registered Optech newsletter sync source");
@@ -395,7 +404,6 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: bt_interval,
-					pages_since_persist: 0,
 				})
 				.await;
 			info!("registered BitcoinTalk sync source");
@@ -419,7 +427,6 @@ async fn main() -> Result<()> {
 					next_run: Instant::now(),
 					retry_count: 0,
 					base_interval: commit_interval,
-					pages_since_persist: 0,
 				})
 				.await;
 		}
@@ -459,7 +466,19 @@ async fn run_single_source(
 	let rate_limiter = Arc::new(RateLimiter::new(200));
 	let token = cli.github_token.clone();
 
-	let source: Box<dyn SyncSource> = if let Some(rest) = spec.strip_prefix("github:") {
+	let source: Box<dyn SyncSource> = if let Some(rest) = spec
+		.strip_prefix("github-reviews:")
+		.or_else(|| spec.strip_prefix("github-review-comments:"))
+	{
+		let (owner, repo) =
+			rest.split_once('/').ok_or_else(|| anyhow::anyhow!("expected owner/repo"))?;
+		Box::new(GitHubReviewSyncSource::new(
+			owner,
+			repo,
+			token,
+			spec.starts_with("github-review-comments:"),
+		))
+	} else if let Some(rest) = spec.strip_prefix("github:") {
 		let parts: Vec<&str> = rest.splitn(2, '/').collect();
 		if parts.len() != 2 {
 			anyhow::bail!("invalid github spec, expected 'github:owner/repo'");
@@ -508,7 +527,7 @@ async fn run_single_source(
 
 	info!(source = spec, limit_pages = cli.limit_pages, "running single source ingest");
 
-	let mut cursor: Option<String> = None;
+	let mut cursor = store.get_sync_state(source.name()).await?.and_then(|s| s.last_cursor);
 	let mut total_docs = 0u32;
 
 	for page in 0..cli.limit_pages {
@@ -516,31 +535,11 @@ async fn run_single_source(
 		let doc_count = result.documents.len();
 		total_docs += doc_count as u32;
 
-		for doc in &result.documents {
-			store.upsert_document(doc).await?;
-
-			if let Some(ref body) = doc.body {
-				let output =
-					bkb_ingest::enrichment::enrich(&doc.id, body, doc.source_repo.as_deref());
-				store.delete_refs_from(&doc.id).await?;
-				for reference in &output.references {
-					store.insert_reference(reference).await?;
-				}
-				store.delete_concept_mentions(&doc.id).await?;
-				for (slug, confidence) in &output.concept_tags {
-					store.upsert_concept_mention(&doc.id, slug, *confidence).await?;
-				}
-			}
-		}
-
-		for reference in &result.references {
-			store.insert_reference(reference).await?;
-		}
-
+		cursor =
+			bkb_ingest::queue::store_page(store, source.name(), cursor.as_deref(), &result).await?;
 		info!(page = page + 1, documents = doc_count, "ingested page");
 
-		cursor = result.next_cursor;
-		if cursor.is_none() {
+		if result.next_cursor.is_none() {
 			info!("source exhausted");
 			break;
 		}

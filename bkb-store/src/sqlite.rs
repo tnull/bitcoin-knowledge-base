@@ -64,12 +64,17 @@ impl SqliteStore {
 		Ok(())
 	}
 
-	/// Insert or update a document, appending to the change log.
+	/// Insert or update a document, rolling back on any error.
 	pub async fn upsert_document(&self, doc: &Document) -> Result<()> {
-		let conn = self.conn.lock().await;
-		let metadata_json = doc.metadata.as_ref().map(|m| serde_json::to_string(m)).transpose()?;
+		let mut conn = self.conn.lock().await;
+		let tx = conn.transaction()?;
+		Self::write_document(&tx, doc)?;
+		tx.commit()?;
+		Ok(())
+	}
 
-		conn.execute_batch("BEGIN IMMEDIATE")?;
+	fn write_document(conn: &Connection, doc: &Document) -> Result<()> {
+		let metadata_json = doc.metadata.as_ref().map(|m| serde_json::to_string(m)).transpose()?;
 
 		// Check if document exists for change_log type
 		let exists: bool = conn
@@ -120,9 +125,43 @@ impl SqliteStore {
 			],
 		)?;
 
-		conn.execute_batch("COMMIT")?;
-
 		debug!(doc_id = %doc.id, change_type, seq, "upserted document");
+		Ok(())
+	}
+
+	/// Atomically persist a complete ingestion page and its resume checkpoint.
+	pub async fn commit_page(
+		&self, documents: &[Document], references: &[Reference],
+		mentions: &[(String, String, f32)], state: &SyncState,
+	) -> Result<()> {
+		let mut conn = self.conn.lock().await;
+		let tx = conn.transaction()?;
+		for doc in documents {
+			Self::write_document(&tx, doc)?;
+			tx.execute("DELETE FROM refs WHERE from_doc_id = ?1", [&doc.id])?;
+			tx.execute("DELETE FROM concept_mentions WHERE doc_id = ?1", [&doc.id])?;
+		}
+		for reference in references {
+			tx.execute(
+				"INSERT INTO refs (from_doc_id, to_doc_id, ref_type, to_external, context)
+				 VALUES (?1, ?2, ?3, ?4, ?5)",
+				rusqlite::params![
+					reference.from_doc_id,
+					reference.to_doc_id,
+					reference.ref_type.as_str(),
+					reference.to_external,
+					reference.context
+				],
+			)?;
+		}
+		for (doc_id, slug, confidence) in mentions {
+			tx.execute(
+				"INSERT OR REPLACE INTO concept_mentions VALUES (?1, ?2, ?3)",
+				rusqlite::params![doc_id, slug, confidence],
+			)?;
+		}
+		Self::write_sync_state(&tx, state)?;
+		tx.commit()?;
 		Ok(())
 	}
 
@@ -340,6 +379,10 @@ impl SqliteStore {
 	/// Update sync state after a sync cycle.
 	pub async fn update_sync_state(&self, state: &SyncState) -> Result<()> {
 		let conn = self.conn.lock().await;
+		Self::write_sync_state(&conn, state)
+	}
+
+	fn write_sync_state(conn: &Connection, state: &SyncState) -> Result<()> {
 		conn.execute(
 			"INSERT INTO sync_state (source_id, source_type, source_repo, last_cursor,
 				last_synced_at, next_run_at, status, error_message, retry_count, items_found)

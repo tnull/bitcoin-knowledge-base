@@ -158,7 +158,7 @@ impl SyncSource for MailArchiveSyncSource {
 			"fetched mail-archive messages"
 		);
 
-		Ok(SyncPage { documents, references: vec![], next_cursor })
+		Ok(SyncPage { checkpoint: None, documents, references: vec![], next_cursor })
 	}
 
 	fn poll_interval(&self) -> Duration {

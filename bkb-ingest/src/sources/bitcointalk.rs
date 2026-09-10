@@ -240,6 +240,7 @@ impl SyncSource for BitcointalkSyncSource {
 						let next = format!("topic:{}|misses:0", topic_id + 1);
 						info!(topic_id, "skipped (board not whitelisted)");
 						Ok(SyncPage {
+							checkpoint: None,
 							documents: vec![],
 							references: vec![],
 							next_cursor: Some(next),
@@ -249,7 +250,12 @@ impl SyncSource for BitcointalkSyncSource {
 						let doc_count = documents.len();
 						let next = format!("topic:{}|misses:0", topic_id + 1);
 						info!(topic_id, documents = doc_count, "fetched topic");
-						Ok(SyncPage { documents, references: vec![], next_cursor: Some(next) })
+						Ok(SyncPage {
+							checkpoint: None,
+							documents,
+							references: vec![],
+							next_cursor: Some(next),
+						})
 					},
 					Ok(None) => {
 						// 404 -- topic doesn't exist
@@ -262,6 +268,7 @@ impl SyncSource for BitcointalkSyncSource {
 								"reached max consecutive misses, switching to tail mode"
 							);
 							Ok(SyncPage {
+								checkpoint: None,
 								documents: vec![],
 								references: vec![],
 								next_cursor: Some(tail_cursor),
@@ -270,6 +277,7 @@ impl SyncSource for BitcointalkSyncSource {
 							let next = format!("topic:{}|misses:{}", topic_id + 1, new_misses);
 							debug!(topic_id, misses = new_misses, "topic not found (404)");
 							Ok(SyncPage {
+								checkpoint: None,
 								documents: vec![],
 								references: vec![],
 								next_cursor: Some(next),
@@ -311,7 +319,12 @@ impl SyncSource for BitcointalkSyncSource {
 				);
 
 				// Return None to pause until next poll_interval
-				Ok(SyncPage { documents: all_documents, references: vec![], next_cursor: None })
+				Ok(SyncPage {
+					checkpoint: None,
+					documents: all_documents,
+					references: vec![],
+					next_cursor: None,
+				})
 			},
 		}
 	}

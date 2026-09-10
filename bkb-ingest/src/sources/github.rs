@@ -5,7 +5,6 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use reqwest::Client;
 use serde::Deserialize;
-use tracing::{debug, info};
 
 use bkb_core::model::{Document, RefType, Reference, SourceType};
 
@@ -20,6 +19,7 @@ const PER_PAGE: u32 = 100;
 /// Uses `GET /repos/{owner}/{repo}/issues?state=all&sort=updated&since=...`
 /// which returns both issues and PRs. The cursor is the `since` timestamp.
 pub struct GitHubIssueSyncSource {
+	api_base: String,
 	client: Client,
 	owner: String,
 	repo: String,
@@ -28,7 +28,13 @@ pub struct GitHubIssueSyncSource {
 
 impl GitHubIssueSyncSource {
 	pub fn new(owner: &str, repo: &str, token: Option<String>) -> Self {
-		Self { client: Client::new(), owner: owner.to_string(), repo: repo.to_string(), token }
+		Self {
+			api_base: GITHUB_API_BASE.into(),
+			client: super::http::client(),
+			owner: owner.to_string(),
+			repo: repo.to_string(),
+			token,
+		}
 	}
 
 	fn build_request(&self, url: &str) -> reqwest::RequestBuilder {
@@ -51,46 +57,31 @@ impl SyncSource for GitHubIssueSyncSource {
 	async fn fetch_page(
 		&self, cursor: Option<&str>, rate_limiter: &RateLimiter,
 	) -> Result<SyncPage> {
+		let mut window = super::http::PollCursor::resume(cursor)?;
 		rate_limiter.acquire().await;
-
-		let mut url = format!(
-			"{}/repos/{}/{}/issues?state=all&sort=updated&direction=asc&per_page={}",
-			GITHUB_API_BASE, self.owner, self.repo, PER_PAGE,
-		);
-
-		if let Some(since) = cursor {
-			url.push_str(&format!("&since={}", since));
+		let mut request = self
+			.build_request(&format!("{}/repos/{}/{}/issues", self.api_base, self.owner, self.repo,))
+			.query(&[("state", "all"), ("sort", "updated"), ("direction", "asc")])
+			.query(&[("page", window.page), ("per_page", PER_PAGE)]);
+		if let Some(since) = &window.since {
+			request = request.query(&[("since", since)]);
 		}
-
-		debug!(url = %url, "fetching GitHub issues page");
-
-		let response =
-			self.build_request(&url).send().await.context("failed to fetch GitHub issues")?;
-
+		let response = request.send().await.context("failed to fetch GitHub issues")?;
 		rate_limiter.update_from_response(response.headers());
-
-		let status = response.status();
-		if !status.is_success() {
-			let body = response.text().await.unwrap_or_default();
-			anyhow::bail!("GitHub API returned {}: {}", status, body);
-		}
-
-		let issues: Vec<GitHubIssue> =
-			response.json().await.context("failed to parse GitHub issues response")?;
-
-		info!(
-			source = %self.name(),
-			count = issues.len(),
-			"fetched issues page"
-		);
-
-		let next_cursor = if issues.len() == PER_PAGE as usize {
-			// More pages available; use the last issue's updated_at as cursor
-			issues.last().map(|i| i.updated_at.to_rfc3339())
-		} else {
-			None
-		};
-
+		let response = response.error_for_status().context("GitHub issues API error")?;
+		let headers = response.headers().clone();
+		let mut issues: Vec<GitHubIssue> =
+			response.json().await.context("failed to parse GitHub issues")?;
+		let mut more = super::http::more_pages(&headers, window.page, PER_PAGE, issues.len());
+		issues.retain(|item| {
+			if item.updated_at > window.until {
+				more = false;
+				false
+			} else {
+				true
+			}
+		});
+		window.page += 1;
 		let mut documents = Vec::with_capacity(issues.len());
 		let mut references = Vec::new();
 
@@ -131,7 +122,9 @@ impl SyncSource for GitHubIssueSyncSource {
 			}
 		}
 
-		Ok(SyncPage { documents, references, next_cursor })
+		let mut result = window.result(documents, more)?;
+		result.references = references;
+		Ok(result)
 	}
 
 	fn poll_interval(&self) -> Duration {
@@ -179,45 +172,34 @@ impl SyncSource for GitHubCommentSyncSource {
 	async fn fetch_page(
 		&self, cursor: Option<&str>, rate_limiter: &RateLimiter,
 	) -> Result<SyncPage> {
+		let mut window = super::http::PollCursor::resume(cursor)?;
 		rate_limiter.acquire().await;
-
-		let mut url = format!(
-			"{}/repos/{}/{}/issues/comments?sort=updated&direction=asc&per_page={}",
-			GITHUB_API_BASE, self.owner, self.repo, PER_PAGE,
-		);
-
-		if let Some(since) = cursor {
-			url.push_str(&format!("&since={}", since));
+		let mut request = self
+			.build_request(&format!(
+				"{}/repos/{}/{}/issues/comments",
+				GITHUB_API_BASE, self.owner, self.repo,
+			))
+			.query(&[("state", "all"), ("sort", "updated"), ("direction", "asc")])
+			.query(&[("page", window.page), ("per_page", PER_PAGE)]);
+		if let Some(since) = &window.since {
+			request = request.query(&[("since", since)]);
 		}
-
-		debug!(url = %url, "fetching GitHub comments page");
-
-		let response =
-			self.build_request(&url).send().await.context("failed to fetch GitHub comments")?;
-
+		let response = request.send().await.context("failed to fetch GitHub comments")?;
 		rate_limiter.update_from_response(response.headers());
-
-		let status = response.status();
-		if !status.is_success() {
-			let body = response.text().await.unwrap_or_default();
-			anyhow::bail!("GitHub API returned {}: {}", status, body);
-		}
-
-		let comments: Vec<GitHubComment> =
-			response.json().await.context("failed to parse GitHub comments response")?;
-
-		info!(
-			source = %self.name(),
-			count = comments.len(),
-			"fetched comments page"
-		);
-
-		let next_cursor = if comments.len() == PER_PAGE as usize {
-			comments.last().map(|c| c.updated_at.to_rfc3339())
-		} else {
-			None
-		};
-
+		let response = response.error_for_status().context("GitHub comments API error")?;
+		let headers = response.headers().clone();
+		let mut comments: Vec<GitHubComment> =
+			response.json().await.context("failed to parse GitHub comments")?;
+		let mut more = super::http::more_pages(&headers, window.page, PER_PAGE, comments.len());
+		comments.retain(|item| {
+			if item.updated_at > window.until {
+				more = false;
+				false
+			} else {
+				true
+			}
+		});
+		window.page += 1;
 		let mut documents = Vec::with_capacity(comments.len());
 		let mut references = Vec::new();
 
@@ -258,7 +240,9 @@ impl SyncSource for GitHubCommentSyncSource {
 			references.extend(extract_issue_refs(&comment.body, &id, &source_repo));
 		}
 
-		Ok(SyncPage { documents, references, next_cursor })
+		let mut result = window.result(documents, more)?;
+		result.references = references;
+		Ok(result)
 	}
 
 	fn poll_interval(&self) -> Duration {
@@ -482,6 +466,42 @@ struct GitHubLabel {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+	#[tokio::test]
+	async fn equal_timestamps_must_advance_page_number() {
+		let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+		let addr = listener.local_addr().unwrap();
+		let server = tokio::spawn(async move {
+			let mut requests = Vec::new();
+			for numbers in [1..101, 101..102] {
+				let (mut socket, _) = listener.accept().await.unwrap();
+				let mut buf = [0u8; 8192];
+				let n = socket.read(&mut buf).await.unwrap();
+				requests.push(String::from_utf8_lossy(&buf[..n]).into_owned());
+				let items: Vec<_> = numbers
+					.map(|n| {
+						serde_json::json!({
+							"number": n, "title": "Same timestamp", "body": "body", "state": "open",
+							"user": {"login": "alice", "id": 1}, "labels": [],
+							"created_at": "2020-01-01T00:00:00Z", "updated_at": "2020-01-02T00:00:00Z"
+						})
+					})
+					.collect();
+				let body = serde_json::to_string(&items).unwrap();
+				socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).as_bytes()).await.unwrap();
+			}
+			requests
+		});
+		let mut source = GitHubIssueSyncSource::new("test", "repo", None);
+		source.api_base = format!("http://{}", addr);
+		let rate = RateLimiter::new(0);
+		let first = source.fetch_page(None, &rate).await.unwrap();
+		let second = source.fetch_page(first.next_cursor.as_deref(), &rate).await.unwrap();
+		assert_eq!(first.documents.len() + second.documents.len(), 101);
+		let requests = server.await.unwrap();
+		assert!(requests[1].contains("page=2"), "equal timestamps must advance the page number");
+	}
 
 	#[test]
 	fn test_extract_same_repo_issue_ref() {

@@ -125,7 +125,7 @@ impl SyncSource for OptechNewsletterSyncSource {
 		let next_cursor = if files.len() >= 100 { Some((page + 1).to_string()) } else { None };
 
 		info!(count = documents.len(), "fetched Optech newsletters");
-		Ok(SyncPage { documents, references: Vec::new(), next_cursor })
+		Ok(SyncPage { checkpoint: None, documents, references: Vec::new(), next_cursor })
 	}
 
 	fn poll_interval(&self) -> Duration {

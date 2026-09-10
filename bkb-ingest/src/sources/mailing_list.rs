@@ -146,6 +146,7 @@ impl SyncSource for MailingListSyncSource {
 					"empty month, advancing"
 				);
 				return Ok(SyncPage {
+					checkpoint: None,
 					documents: vec![],
 					references: vec![],
 					next_cursor: Some(next),
@@ -153,7 +154,12 @@ impl SyncSource for MailingListSyncSource {
 			}
 
 			debug!(source = %self.list_name, "caught up with current month");
-			return Ok(SyncPage { documents: vec![], references: vec![], next_cursor: None });
+			return Ok(SyncPage {
+				checkpoint: None,
+				documents: vec![],
+				references: vec![],
+				next_cursor: None,
+			});
 		}
 
 		let entry_count = entries.len();
@@ -238,7 +244,7 @@ impl SyncSource for MailingListSyncSource {
 			"fetched mailing list messages"
 		);
 
-		Ok(SyncPage { documents, references: vec![], next_cursor })
+		Ok(SyncPage { checkpoint: None, documents, references: vec![], next_cursor })
 	}
 
 	fn poll_interval(&self) -> Duration {

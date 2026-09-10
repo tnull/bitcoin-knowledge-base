@@ -89,6 +89,7 @@ impl SyncSource for DelvingSyncSource {
 
 		if topics.is_empty() {
 			return Ok(SyncPage {
+				checkpoint: None,
 				documents: Vec::new(),
 				references: Vec::new(),
 				next_cursor: None,
@@ -225,7 +226,7 @@ impl SyncSource for DelvingSyncSource {
 		let next_cursor =
 			if topics.len() >= TOPICS_PER_PAGE { Some((page + 1).to_string()) } else { None };
 
-		Ok(SyncPage { documents, references, next_cursor })
+		Ok(SyncPage { checkpoint: None, documents, references, next_cursor })
 	}
 
 	fn poll_interval(&self) -> Duration {

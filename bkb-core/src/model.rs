@@ -154,6 +154,7 @@ impl Document {
 	/// cannot be reliably reconstructed from the spec number alone.
 	pub fn url(&self) -> Option<String> {
 		match self.source_type {
+			SourceType::GithubReview | SourceType::GithubReviewComment => self.metadata_url(),
 			SourceType::GithubIssue => Some(format!(
 				"https://github.com/{}/issues/{}",
 				self.source_repo.as_deref()?,
@@ -441,6 +442,21 @@ mod tests {
 			parent_id: None,
 			metadata: None,
 			seq: None,
+		}
+	}
+
+	#[test]
+	fn test_review_permalink() {
+		for kind in [SourceType::GithubReview, SourceType::GithubReviewComment] {
+			let mut doc = make_doc(kind, Some("lightningdevkit/rust-lightning"), "42");
+			doc.metadata = Some(
+				serde_json::json!({"url": "https://github.com/lightningdevkit/rust-lightning/pull/1#discussion_r42"}),
+			);
+			assert_eq!(
+				doc.url().as_deref(),
+				Some("https://github.com/lightningdevkit/rust-lightning/pull/1#discussion_r42"),
+				"review permalinks must remain usable"
+			);
 		}
 	}
 

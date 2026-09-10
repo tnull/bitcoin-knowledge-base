@@ -124,7 +124,7 @@ impl SyncSource for GitCommitSyncSource {
 			self.cache.write_cursor(&self.owner, &self.repo, sha)?;
 		}
 
-		Ok(SyncPage { documents, references, next_cursor })
+		Ok(SyncPage { checkpoint: None, documents, references, next_cursor })
 	}
 
 	fn poll_interval(&self) -> Duration {

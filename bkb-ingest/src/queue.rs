@@ -34,9 +34,6 @@ pub struct SyncJob {
 	pub next_run: Instant,
 	pub retry_count: u32,
 	pub base_interval: Duration,
-	/// Counter for pages fetched since last cursor persist.
-	/// Used to periodically save progress during long pagination runs.
-	pub pages_since_persist: u32,
 }
 
 impl Eq for SyncJob {}
@@ -62,11 +59,6 @@ impl PartialOrd for SyncJob {
 		Some(self.cmp(other))
 	}
 }
-
-/// How often to persist the cursor during pagination (every N pages).
-/// This ensures progress survives server restarts for slow-paginating
-/// sources like IRC logs and BitcoinTalk.
-const PERSIST_EVERY_N_PAGES: u32 = 10;
 
 /// Job queue that schedules and runs sync sources.
 pub struct JobQueue {
@@ -173,90 +165,26 @@ impl JobQueue {
 
 		let started = std::time::Instant::now();
 
-		match job.source.fetch_page(job.cursor.as_deref(), &self.rate_limiter).await {
-			Ok(page) => {
+		let result = async {
+			let page = job.source.fetch_page(job.cursor.as_deref(), &self.rate_limiter).await?;
+			let cursor =
+				store_page(&self.store, &job.source_id, job.cursor.as_deref(), &page).await?;
+			Ok::<_, anyhow::Error>((page, cursor))
+		}
+		.await;
+		match result {
+			Ok((page, cursor)) => {
 				let doc_count = page.documents.len();
-
-				// Store documents and enrichment results
-				for doc in &page.documents {
-					if let Err(e) = self.store.upsert_document(doc).await {
-						error!(doc_id = %doc.id, error = %e, "failed to upsert document");
-						continue;
-					}
-
-					// Run enrichment pipeline on the document body
-					if let Some(ref body) = doc.body {
-						let output = enrichment::enrich(&doc.id, body, doc.source_repo.as_deref());
-						// Delete old refs and insert new ones
-						if let Err(e) = self.store.delete_refs_from(&doc.id).await {
-							warn!(doc_id = %doc.id, error = %e, "failed to delete old refs");
-						}
-						for reference in &output.references {
-							if let Err(e) = self.store.insert_reference(reference).await {
-								warn!(doc_id = %doc.id, error = %e, "failed to insert reference");
-							}
-						}
-
-						// Store concept tags
-						if let Err(e) = self.store.delete_concept_mentions(&doc.id).await {
-							warn!(doc_id = %doc.id, error = %e, "failed to delete old concept mentions");
-						}
-						for (slug, confidence) in &output.concept_tags {
-							if let Err(e) =
-								self.store.upsert_concept_mention(&doc.id, slug, *confidence).await
-							{
-								warn!(doc_id = %doc.id, concept = %slug, error = %e, "failed to store concept mention");
-							}
-						}
-					}
-				}
-
-				// Store any source-level references
-				for reference in &page.references {
-					if let Err(e) = self.store.insert_reference(reference).await {
-						warn!(error = %e, "failed to insert source reference");
-					}
-				}
-
-				info!(source = %source_name, documents = doc_count, "page processed");
-
-				// Determine next run
 				let paginating = page.next_cursor.is_some();
-				if let Some(next_cursor) = page.next_cursor {
-					// More pages to fetch -- run immediately
-					job.cursor = Some(next_cursor);
-					job.next_run = Instant::now();
-					job.retry_count = 0;
-
-					// Periodically persist cursor during pagination so that
-					// progress survives server restarts.
-					job.pages_since_persist += 1;
-					if job.pages_since_persist >= PERSIST_EVERY_N_PAGES {
-						self.persist_cursor(&job.source_id, job.cursor.as_deref(), doc_count).await;
-						job.pages_since_persist = 0;
-						debug!(
-							source = %source_name,
-							cursor = ?job.cursor,
-							"persisted cursor checkpoint during pagination"
-						);
-					}
-				} else {
-					// Caught up -- persist cursor to sync_state so we resume
-					// from here on restart / next cycle
-					self.persist_cursor(&job.source_id, job.cursor.as_deref(), doc_count).await;
-
-					// Apply adaptive scheduling
-					let interval = adaptive_interval(job.base_interval, doc_count);
-					job.next_run = Instant::now() + interval;
-					job.retry_count = 0;
-
-					info!(
-						source = %source_name,
-						cursor = ?job.cursor,
-						next_in_secs = interval.as_secs(),
-						"sync cycle complete, scheduling next run"
-					);
-				}
+				job.cursor = cursor;
+				job.next_run = Instant::now()
+					+ if paginating {
+						Duration::ZERO
+					} else {
+						adaptive_interval(job.base_interval, doc_count)
+					};
+				job.retry_count = 0;
+				info!(source = %source_name, documents = doc_count, paginating, "page committed");
 
 				// Record metrics
 				if let Some(ref metrics) = self.metrics {
@@ -302,30 +230,64 @@ impl JobQueue {
 
 		self.jobs.lock().await.push(job);
 	}
+}
 
-	/// Persist the current cursor to `sync_state` so it survives restarts.
-	async fn persist_cursor(&self, source_id: &str, cursor: Option<&str>, items_found: usize) {
-		let state = SyncState {
-			source_id: source_id.to_string(),
-			source_type: source_id.split(':').next().unwrap_or("unknown").to_string(),
-			source_repo: None,
-			last_cursor: cursor.map(String::from),
-			last_synced_at: Some(Utc::now()),
-			next_run_at: None,
-			status: SyncStatus::Ok,
-			error_message: None,
-			retry_count: 0,
-			items_found: items_found as i32,
-		};
-
-		if let Err(e) = self.store.update_sync_state(&state).await {
-			warn!(
-				source = %source_id,
-				error = %e,
-				"failed to persist sync cursor"
+/// Enrich and commit a page using the same atomic path in scheduled and CLI ingestion.
+pub async fn store_page(
+	store: &SqliteStore, source_id: &str, previous: Option<&str>, page: &crate::sources::SyncPage,
+) -> Result<Option<String>> {
+	let cursor = page
+		.next_cursor
+		.clone()
+		.or_else(|| page.checkpoint.clone())
+		.or_else(|| previous.map(str::to_owned));
+	let mut references = page.references.clone();
+	let mut mentions = Vec::new();
+	for doc in &page.documents {
+		if let Some(body) = &doc.body {
+			let output = enrichment::enrich(&doc.id, body, doc.source_repo.as_deref());
+			for reference in output.references {
+				if !references.iter().any(|r| {
+					r.from_doc_id == reference.from_doc_id
+						&& r.to_doc_id == reference.to_doc_id
+						&& r.to_external == reference.to_external
+						&& r.ref_type == reference.ref_type
+				}) {
+					references.push(reference);
+				}
+			}
+			mentions.extend(
+				output
+					.concept_tags
+					.into_iter()
+					.map(|(slug, confidence)| (doc.id.clone(), slug, confidence)),
 			);
 		}
+		if let Some(parent) = &doc.parent_id {
+			references.push(bkb_core::model::Reference {
+				id: None,
+				from_doc_id: doc.id.clone(),
+				to_doc_id: Some(parent.clone()),
+				ref_type: bkb_core::model::RefType::RepliesTo,
+				to_external: None,
+				context: None,
+			});
+		}
 	}
+	let state = SyncState {
+		source_id: source_id.into(),
+		source_type: source_id.split(':').next().unwrap_or("unknown").into(),
+		source_repo: None,
+		last_cursor: cursor.clone(),
+		last_synced_at: Some(Utc::now()),
+		next_run_at: None,
+		status: SyncStatus::Ok,
+		error_message: None,
+		retry_count: 0,
+		items_found: page.documents.len() as i32,
+	};
+	store.commit_page(&page.documents, &references, &mentions, &state).await?;
+	Ok(cursor)
 }
 
 /// Compute the adaptive polling interval based on how many items were found.
@@ -340,6 +302,70 @@ fn adaptive_interval(base: Duration, items_found: usize) -> Duration {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::sources::SyncPage;
+	use bkb_core::model::{Document, SourceType};
+	use bkb_core::store::KnowledgeStore;
+
+	struct ConflictingPage;
+	#[async_trait::async_trait]
+	impl SyncSource for ConflictingPage {
+		async fn fetch_page(&self, _: Option<&str>, _: &RateLimiter) -> Result<SyncPage> {
+			let doc = Document {
+				id: "github_issue:test/repo:1".into(),
+				source_type: SourceType::GithubIssue,
+				source_repo: Some("test/repo".into()),
+				source_id: "1".into(),
+				title: None,
+				body: None,
+				author: None,
+				author_id: None,
+				created_at: Utc::now(),
+				updated_at: None,
+				parent_id: None,
+				metadata: None,
+				seq: None,
+			};
+			let mut conflicting = doc.clone();
+			conflicting.id = "conflicting".into();
+			Ok(SyncPage {
+				checkpoint: None,
+				documents: vec![doc, conflicting],
+				references: vec![],
+				next_cursor: Some("next".into()),
+			})
+		}
+		fn poll_interval(&self) -> Duration {
+			Duration::from_secs(3600)
+		}
+		fn name(&self) -> &str {
+			"test:failure"
+		}
+	}
+
+	#[tokio::test]
+	async fn failed_page_must_not_advance_or_partially_commit() {
+		let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+		let queue = JobQueue::new(Arc::new(RateLimiter::new(0)), store.clone(), None);
+		queue
+			.execute_job(SyncJob {
+				source_id: "test:failure".into(),
+				source: Box::new(ConflictingPage),
+				priority: Priority::Low,
+				cursor: None,
+				next_run: Instant::now(),
+				retry_count: 0,
+				base_interval: Duration::from_secs(3600),
+			})
+			.await;
+		assert!(
+			queue.jobs.lock().await.peek().unwrap().cursor.is_none(),
+			"failed page must not advance its cursor"
+		);
+		assert!(
+			store.get_document("github_issue:test/repo:1").await.unwrap().is_none(),
+			"failed page must roll back all documents"
+		);
+	}
 
 	#[test]
 	fn test_adaptive_interval_no_items() {

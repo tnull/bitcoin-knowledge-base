@@ -219,7 +219,7 @@ impl SyncSource for BipSyncSource {
 			if next_idx < all_files.len() { Some(next_idx.to_string()) } else { None };
 
 		info!(count = documents.len(), start, total = all_files.len(), "fetched BIPs page");
-		Ok(SyncPage { documents, references: Vec::new(), next_cursor })
+		Ok(SyncPage { checkpoint: None, documents, references: Vec::new(), next_cursor })
 	}
 
 	fn poll_interval(&self) -> Duration {
@@ -355,7 +355,7 @@ impl SyncSource for BoltSyncSource {
 		}
 
 		info!(count = documents.len(), "fetched all BOLTs");
-		Ok(SyncPage { documents, references: Vec::new(), next_cursor: None })
+		Ok(SyncPage { checkpoint: None, documents, references: Vec::new(), next_cursor: None })
 	}
 
 	fn poll_interval(&self) -> Duration {
@@ -490,7 +490,7 @@ impl SyncSource for BlipSyncSource {
 		}
 
 		info!(count = documents.len(), "fetched all bLIPs");
-		Ok(SyncPage { documents, references: Vec::new(), next_cursor: None })
+		Ok(SyncPage { checkpoint: None, documents, references: Vec::new(), next_cursor: None })
 	}
 
 	fn poll_interval(&self) -> Duration {
@@ -625,7 +625,7 @@ impl SyncSource for LudSyncSource {
 		}
 
 		info!(count = documents.len(), "fetched all LUDs");
-		Ok(SyncPage { documents, references: Vec::new(), next_cursor: None })
+		Ok(SyncPage { checkpoint: None, documents, references: Vec::new(), next_cursor: None })
 	}
 
 	fn poll_interval(&self) -> Duration {
@@ -760,7 +760,7 @@ impl SyncSource for NutSyncSource {
 		}
 
 		info!(count = documents.len(), "fetched all NUTs");
-		Ok(SyncPage { documents, references: Vec::new(), next_cursor: None })
+		Ok(SyncPage { checkpoint: None, documents, references: Vec::new(), next_cursor: None })
 	}
 
 	fn poll_interval(&self) -> Duration {

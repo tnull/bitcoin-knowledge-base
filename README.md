@@ -46,6 +46,10 @@ GITHUB_TOKEN=ghp_... cargo run -p bkb-server -- --dev-subset
 # Test a single source adapter
 cargo run -p bkb-server -- --ingest-only github:lightningdevkit/ldk-sample --limit-pages 1
 
+# Backfill PR reviews or inline review comments (resumable in the selected DB)
+cargo run -p bkb-server -- --ingest-only github-reviews:lightningdevkit/ldk-sample --limit-pages 10
+cargo run -p bkb-server -- --ingest-only github-review-comments:lightningdevkit/ldk-sample --limit-pages 10
+
 # API-only mode (no ingestion)
 cargo run -p bkb-server -- --no-ingest --db bkb.db
 ```

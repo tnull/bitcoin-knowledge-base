@@ -343,9 +343,9 @@ fn sync_patterns_for_source_type(source_type: &str) -> Vec<String> {
 		"lud" => vec!["specs:luds".into()],
 		"nut" => vec!["specs:nuts".into()],
 		"github_issue" | "github_pr" => vec!["github:%:issues".into()],
-		"github_comment" | "github_review" | "github_review_comment" => {
-			vec!["github:%:comments".into()]
-		},
+		"github_comment" => vec!["github:%:comments".into()],
+		"github_review" => vec!["github:%:reviews".into()],
+		"github_review_comment" => vec!["github:%:review_comments".into()],
 		"github_discussion" | "github_discussion_comment" => {
 			vec!["github:%:discussions".into()]
 		},

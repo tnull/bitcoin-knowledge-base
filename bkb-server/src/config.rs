@@ -4,6 +4,25 @@ pub struct Config {
 }
 
 impl Config {
+	/// Review backfill starts with repositories whose development has moved.
+	pub fn github_review_repos(&self) -> Vec<(String, String)> {
+		let repos = [
+			("lightningdevkit", "rust-lightning"),
+			("lightningdevkit", "ldk-sample"),
+			("rust-bitcoin", "rust-secp256k1"),
+			("rust-bitcoin", "rust-psbt"),
+			("rust-bitcoin", "corepc"),
+			("rust-bitcoin", "bitcoin-payment-instructions"),
+		];
+		repos
+			.into_iter()
+			.filter(|(owner, repo)| {
+				!self.dev_subset || (*owner == "lightningdevkit" && *repo == "ldk-sample")
+			})
+			.map(|(owner, repo)| (owner.into(), repo.into()))
+			.collect()
+	}
+
 	pub fn new(dev_subset: bool) -> Self {
 		Self { dev_subset }
 	}

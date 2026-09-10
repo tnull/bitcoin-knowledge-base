@@ -64,7 +64,12 @@ impl SyncSource for IrcLogSyncSource {
 		// If the date is today or in the future, we are caught up.
 		if date >= today {
 			debug!(channel = %self.channel, date = %date, "caught up to today, no more pages");
-			return Ok(SyncPage { documents: vec![], references: vec![], next_cursor: None });
+			return Ok(SyncPage {
+				checkpoint: None,
+				documents: vec![],
+				references: vec![],
+				next_cursor: None,
+			});
 		}
 
 		let url = self.log_url(&date);
@@ -89,7 +94,12 @@ impl SyncSource for IrcLogSyncSource {
 				date = %date_str,
 				"no IRC log for this date (404), skipping"
 			);
-			return Ok(SyncPage { documents: vec![], references: vec![], next_cursor });
+			return Ok(SyncPage {
+				checkpoint: None,
+				documents: vec![],
+				references: vec![],
+				next_cursor,
+			});
 		}
 
 		if !status.is_success() {
@@ -108,7 +118,12 @@ impl SyncSource for IrcLogSyncSource {
 				date = %date_str,
 				"IRC log is empty, skipping"
 			);
-			return Ok(SyncPage { documents: vec![], references: vec![], next_cursor });
+			return Ok(SyncPage {
+				checkpoint: None,
+				documents: vec![],
+				references: vec![],
+				next_cursor,
+			});
 		}
 
 		let source_id = format!("{}:{}", self.channel, date_str);
@@ -139,7 +154,12 @@ impl SyncSource for IrcLogSyncSource {
 			"fetched IRC log"
 		);
 
-		Ok(SyncPage { documents: vec![document], references: vec![], next_cursor })
+		Ok(SyncPage {
+			checkpoint: None,
+			documents: vec![document],
+			references: vec![],
+			next_cursor,
+		})
 	}
 
 	fn poll_interval(&self) -> Duration {
