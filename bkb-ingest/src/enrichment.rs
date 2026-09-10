@@ -13,6 +13,16 @@ pub struct EnrichmentOutput {
 	pub concept_tags: Vec<(String, f32)>,
 }
 
+pub fn enrich_document(doc: &bkb_core::model::Document) -> EnrichmentOutput {
+	let origin = bkb_core::mirror::parse(doc);
+	let body =
+		origin.as_ref().map(|o| o.body.as_str()).unwrap_or(doc.body.as_deref().unwrap_or(""));
+	EnrichmentOutput {
+		references: crate::forge_refs::extract(doc),
+		concept_tags: tag_concepts(body),
+	}
+}
+
 /// Run the enrichment pipeline on a document body.
 ///
 /// Extracts cross-references (BIP, BOLT, issue mentions) and tags Bitcoin

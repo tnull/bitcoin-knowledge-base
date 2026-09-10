@@ -19,6 +19,11 @@ pub trait KnowledgeStore: Send + Sync {
 	/// Get a single document by ID with full content, references, and concepts.
 	async fn get_document(&self, id: &str) -> Result<Option<DocumentContext>>;
 
+	/// Inspect the original source record, without canonical projection.
+	async fn get_raw_document(&self, id: &str) -> Result<Option<DocumentContext>> {
+		self.get_document(id).await
+	}
+
 	/// Find all documents referencing a given entity (BIP, BOLT, issue, commit, or concept).
 	async fn get_references(
 		&self, entity: &str, ref_type: Option<&str>, limit: u32,

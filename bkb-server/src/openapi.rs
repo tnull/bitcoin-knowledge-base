@@ -57,7 +57,7 @@ fn search_path() -> serde_json::Value {
 				{
 					"name": "source_repo",
 					"in": "query",
-					"description": "Comma-separated GitHub repositories to filter by (e.g. \"bitcoin/bitcoin,lightningdevkit/rust-lightning\").",
+					"description": "Comma-separated repositories. Configured owner/repo names include both forges; git.rust-bitcoin.org/owner/repo selects Forgejo membership.",
 					"schema": { "type": "string" }
 				},
 				{
@@ -83,6 +83,11 @@ fn search_path() -> serde_json::Value {
 					"in": "query",
 					"description": "Maximum number of results (default 20).",
 					"schema": { "type": "integer", "default": 20 }
+				},
+				{
+					"name": "deduplicate", "in": "query",
+					"description": "Collapse verified copies before limiting results. False returns raw source records.",
+					"schema": { "type": "boolean", "default": true }
 				}
 			],
 			"responses": {
@@ -106,6 +111,8 @@ fn document_path() -> serde_json::Value {
 			"summary": "Get a document by ID",
 			"description": "Retrieve the full content of a document including its body text, cross-references, and concept tags. Document IDs have the format \"source_type:source_id\" or \"source_type:owner/repo:source_id\".",
 			"parameters": [
+				{ "name": "raw", "in": "query", "schema": { "type": "boolean", "default": false },
+				  "description": "Return the exact raw record; default resolves old IDs to the canonical record." },
 				{
 					"name": "id",
 					"in": "path",
@@ -354,9 +361,11 @@ fn schemas() -> serde_json::Value {
 		"SearchResult": {
 			"type": "object",
 			"properties": {
+				"provenance": { "type": "array", "items": { "$ref": "#/components/schemas/DocumentOrigin" } },
+				"matched_source_id": { "type": "string", "nullable": true, "description": "Raw source record supplying the FTS snippet." },
 				"id": { "type": "string", "description": "Canonical document ID." },
 				"source_type": { "type": "string", "description": "The source type." },
-				"source_repo": { "type": "string", "nullable": true, "description": "GitHub repository (owner/repo) if applicable." },
+				"source_repo": { "type": "string", "nullable": true, "description": "Source repository; Forgejo identities include the host." },
 				"title": { "type": "string", "nullable": true },
 				"snippet": { "type": "string", "nullable": true, "description": "FTS excerpt with matching terms highlighted." },
 				"author": { "type": "string", "nullable": true },
@@ -373,6 +382,7 @@ fn schemas() -> serde_json::Value {
 		"DocumentContext": {
 			"type": "object",
 			"properties": {
+				"provenance": { "type": "array", "items": { "$ref": "#/components/schemas/DocumentOrigin" } },
 				"document": { "$ref": "#/components/schemas/Document" },
 				"url": { "type": "string", "nullable": true, "description": "Canonical URL." },
 				"outgoing_refs": {
@@ -390,6 +400,20 @@ fn schemas() -> serde_json::Value {
 					"items": { "type": "string" },
 					"description": "Bitcoin/Lightning concept tags."
 				}
+			}
+		},
+		"DocumentOrigin": {
+			"type": "object",
+			"properties": {
+				"id": { "type": "string" },
+				"source_type": { "type": "string" },
+				"source_repo": { "type": "string", "nullable": true },
+				"url": { "type": "string", "nullable": true },
+				"author": { "type": "string", "nullable": true },
+				"author_id": { "type": "string", "nullable": true },
+				"created_at": { "type": "string", "format": "date-time" },
+				"updated_at": { "type": "string", "format": "date-time", "nullable": true },
+				"evidence": { "type": "string", "nullable": true }
 			}
 		},
 		"Document": {

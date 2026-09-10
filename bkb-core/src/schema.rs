@@ -22,6 +22,26 @@ CREATE INDEX IF NOT EXISTS idx_documents_parent ON documents(parent_id);
 CREATE INDEX IF NOT EXISTS idx_documents_author ON documents(author);
 CREATE INDEX IF NOT EXISTS idx_documents_created ON documents(created_at);
 CREATE INDEX IF NOT EXISTS idx_documents_seq ON documents(seq);
+CREATE INDEX IF NOT EXISTS idx_documents_import
+    ON documents(source_repo, source_type, created_at);
+CREATE INDEX IF NOT EXISTS idx_documents_url ON documents(json_extract(metadata, '$.url'));
+
+-- Derived, reversible equivalences. Targets may not have been ingested yet.
+CREATE TABLE IF NOT EXISTS document_links (
+    doc_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    target_id TEXT NOT NULL,
+    origin_id TEXT NOT NULL,
+    evidence TEXT NOT NULL,
+    PRIMARY KEY(doc_id, target_id)
+);
+CREATE INDEX IF NOT EXISTS idx_links_target ON document_links(target_id);
+CREATE TABLE IF NOT EXISTS document_aliases (
+    doc_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+    canonical_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    origin_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    evidence TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_aliases_canonical ON document_aliases(canonical_id);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
     title,

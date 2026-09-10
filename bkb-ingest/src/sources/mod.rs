@@ -9,6 +9,7 @@ pub mod irc;
 pub mod mail_archive;
 pub mod mailing_list;
 pub mod optech;
+pub mod reconcile;
 pub mod specs;
 
 use anyhow::Result;

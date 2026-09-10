@@ -24,6 +24,10 @@ OpenAI Actions (ChatGPT) for fast, precise lookups.
 
 ## Architecture
 
+For migrated repositories, see [cross-forge ingestion](docs/FORGEJO.md) for
+repository mappings, verified deduplication, raw-record access, and backfill
+operations. GitHub issue activity remains enabled alongside Forgejo ingestion.
+
 ```
 bkb-core      Shared types, traits, schema, Bitcoin concept vocabulary
 bkb-store     SQLite + FTS5 storage backend (KnowledgeStore implementation)

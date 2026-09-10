@@ -12,6 +12,589 @@ use bkb_store::sqlite::SqliteStore;
 // Helpers
 // ---------------------------------------------------------------------------
 
+const FORGEJO_REPO: &str = "git.rust-bitcoin.org/lightningdevkit/rust-lightning";
+
+#[tokio::test]
+async fn commit_history_replay_preserves_existing_data_and_imports_missing_commits() {
+	use bkb_core::model::Reference;
+	use bkb_ingest::{queue::store_page, sources::SyncPage};
+	let temp = tempfile::tempdir().unwrap();
+	let path = temp.path().join("commit-replay.db");
+	let store = SqliteStore::open(&path).unwrap();
+	let sql = rusqlite::Connection::open(&path).unwrap();
+	let mut old = make_doc(
+		SourceType::Commit,
+		Some("lightningdevkit/rust-lightning"),
+		"old-sha",
+		"Merge #42",
+		"Taproot implementation",
+		"alice",
+		Utc::now(),
+	);
+	old.metadata = Some(
+		serde_json::json!({"url":"https://github.com/lightningdevkit/rust-lightning/commit/old-sha"}),
+	);
+	store.upsert_document(&old).await.unwrap();
+	store
+		.insert_reference(&Reference {
+			id: None,
+			from_doc_id: old.id.clone(),
+			to_doc_id: None,
+			ref_type: RefType::MentionsPr,
+			to_external: Some("lightningdevkit/rust-lightning#42".into()),
+			context: Some("Historical GitHub merge".into()),
+		})
+		.await
+		.unwrap();
+	sql.execute("INSERT INTO concepts (slug,name) VALUES ('custom-tag','Custom tag')", []).unwrap();
+	store.upsert_concept_mention(&old.id, "custom-tag", 0.25).await.unwrap();
+	store.upsert_concept_mention(&old.id, "taproot", 0.5).await.unwrap();
+	let before = store.get_raw_document(&old.id).await.unwrap().unwrap();
+	let old_reference = serde_json::to_value(&before.outgoing_refs[0]).unwrap();
+	let mut replayed = old.clone();
+	replayed.metadata =
+		Some(serde_json::json!({"url":"https://git.rust-bitcoin.org/new-location"}));
+	let missing = make_doc(
+		SourceType::Commit,
+		Some("lightningdevkit/rust-lightning"),
+		"missing-sha",
+		"Previously skipped commit",
+		"Payjoin implementation",
+		"bob",
+		Utc::now(),
+	);
+	let checkpoint =
+		r#"{"version":1,"head":"head-sha","baseline":null,"offset":200,"complete":false}"#;
+	let page = SyncPage {
+		documents: vec![replayed, missing.clone()],
+		references: vec![],
+		next_cursor: Some(checkpoint.into()),
+		checkpoint: None,
+	};
+	let source = "commits:lightningdevkit/rust-lightning";
+	sql.execute_batch("CREATE TRIGGER reject_commit_replay BEFORE INSERT ON sync_state BEGIN SELECT RAISE(ABORT,'checkpoint rejected'); END").unwrap();
+	assert!(store_page(&store, source, Some("old-sha"), &page).await.is_err());
+	assert!(store.get_document(&missing.id).await.unwrap().is_none());
+	assert!(store.get_sync_state(source).await.unwrap().is_none());
+	sql.execute_batch("DROP TRIGGER reject_commit_replay").unwrap();
+	let mut previous = Some("old-sha".to_owned());
+	for _ in 0..2 {
+		store_page(&store, source, previous.as_deref(), &page).await.unwrap();
+		let after = store.get_raw_document(&old.id).await.unwrap().unwrap();
+		assert!(
+			after.outgoing_refs.iter().any(|r| serde_json::to_value(r).unwrap() == old_reference),
+			"Git history repair must retain historical references and their IDs"
+		);
+		assert_eq!(
+			serde_json::to_value(&after.document).unwrap(),
+			serde_json::to_value(&before.document).unwrap(),
+			"Git history repair must retain the entire stored commit record"
+		);
+		for (slug, expected) in [("custom-tag", 0.25), ("taproot", 0.5)] {
+			let confidence: f32 = sql
+				.query_row(
+					"SELECT confidence FROM concept_mentions WHERE doc_id=?1 AND concept_slug=?2",
+					rusqlite::params![old.id, slug],
+					|r| r.get(0),
+				)
+				.unwrap();
+			assert_eq!(confidence, expected);
+		}
+		let changes: i64 =
+			sql.query_row("SELECT COUNT(*) FROM change_log", [], |r| r.get(0)).unwrap();
+		assert_eq!(changes, 2, "replay must add only previously missing commits");
+		let imported = store.get_raw_document(&missing.id).await.unwrap().unwrap();
+		assert_eq!(imported.document.body, missing.body);
+		assert!(imported.concepts.contains(&"payjoin".into()));
+		previous = store.get_sync_state(source).await.unwrap().unwrap().last_cursor;
+		assert_eq!(previous.as_deref(), Some(checkpoint));
+	}
+	// Mutable source records still refresh through the same page writer.
+	let mut issue = make_doc(
+		SourceType::GithubIssue,
+		Some("bitcoin/bitcoin"),
+		"1",
+		"Old title",
+		"Old body",
+		"alice",
+		Utc::now(),
+	);
+	store.upsert_document(&issue).await.unwrap();
+	issue.body = Some("Updated body with payjoin".into());
+	let update = SyncPage {
+		documents: vec![issue.clone()],
+		references: vec![],
+		next_cursor: None,
+		checkpoint: None,
+	};
+	store_page(&store, "github:bitcoin/bitcoin", None, &update).await.unwrap();
+	let updated = store.get_raw_document(&issue.id).await.unwrap().unwrap();
+	assert_eq!(updated.document.body, issue.body);
+	assert!(updated.concepts.contains(&"payjoin".into()));
+}
+
+fn permalink_document(kind: SourceType, id: &str, anchor: &str) -> Document {
+	let mut doc =
+		make_doc(kind, Some(FORGEJO_REPO), id, "Review", "Review text", "alice", Utc::now());
+	doc.metadata = Some(
+		serde_json::json!({"url": format!("https://{FORGEJO_REPO}/pulls/4775#issuecomment-{anchor}")}),
+	);
+	doc
+}
+
+async fn store_permalink_mention(store: &SqliteStore, url: &str) -> Document {
+	let doc = make_doc(
+		SourceType::GithubIssue,
+		Some("bitcoin/bitcoin"),
+		"123",
+		"Mention",
+		url,
+		"bob",
+		Utc::now(),
+	);
+	let references = bkb_ingest::forge_refs::extract(&doc);
+	store.upsert_document(&doc).await.unwrap();
+	for reference in references {
+		store.insert_reference(&reference).await.unwrap();
+	}
+	doc
+}
+
+async fn assert_permalink_target(store: &SqliteStore, mention: &Document, target: &Document) {
+	let url = target.metadata.as_ref().unwrap()["url"].as_str().unwrap();
+	for context in [
+		store.get_document(&mention.id).await.unwrap().unwrap(),
+		store.get_raw_document(&mention.id).await.unwrap().unwrap(),
+	] {
+		assert_eq!(context.outgoing_refs.len(), 1);
+		assert_eq!(
+			context.outgoing_refs[0].to_doc_id.as_deref(),
+			Some(target.id.as_str()),
+			"Forgejo permalinks must resolve to the raw API document ID"
+		);
+	}
+	assert_eq!(
+		store.get_document(&target.id).await.unwrap().unwrap().incoming_refs.len(),
+		1,
+		"resolved permalink must appear in incoming references"
+	);
+	for entity in [&target.id, url] {
+		let references = store.get_references(entity, None, 10).await.unwrap();
+		assert_eq!(references.len(), 1, "permalink and raw ID lookups must agree");
+		assert_eq!(references[0].to_doc_id.as_deref(), Some(target.id.as_str()));
+	}
+}
+
+#[tokio::test]
+async fn forgejo_permalinks_resolve_all_comment_kinds_by_stored_url() {
+	for (kind, id, anchor) in [
+		(SourceType::ForgejoComment, "424542", "424542"),
+		(SourceType::ForgejoReviewComment, "424543", "424543"),
+		(SourceType::ForgejoReview, "159430", "424544"),
+	] {
+		let store = SqliteStore::open_in_memory().unwrap();
+		let target = permalink_document(kind, id, anchor);
+		store.upsert_document(&target).await.unwrap();
+		let mention = store_permalink_mention(
+			&store,
+			target.metadata.as_ref().unwrap()["url"].as_str().unwrap(),
+		)
+		.await;
+		assert_permalink_target(&store, &mention, &target).await;
+	}
+}
+
+#[tokio::test]
+async fn forgejo_permalinks_wait_for_targets_and_reject_ambiguous_urls() {
+	let store = SqliteStore::open_in_memory().unwrap();
+	let target = permalink_document(SourceType::ForgejoReview, "159430", "424544");
+	let url = target.metadata.as_ref().unwrap()["url"].as_str().unwrap();
+	let mention = store_permalink_mention(&store, url).await;
+	assert!(
+		store.get_raw_document(&mention.id).await.unwrap().unwrap().outgoing_refs[0]
+			.to_doc_id
+			.is_none(),
+		"a missing permalink target must remain unresolved"
+	);
+	// A record from another forge cannot provide evidence for this URL.
+	let mut other_host = target.clone();
+	other_host.source_type = SourceType::GithubReview;
+	other_host.source_repo = Some("lightningdevkit/rust-lightning".into());
+	other_host.id = Document::make_id(
+		&other_host.source_type,
+		other_host.source_repo.as_deref(),
+		&other_host.source_id,
+	);
+	store.upsert_document(&other_host).await.unwrap();
+	assert!(store.get_document(&mention.id).await.unwrap().unwrap().outgoing_refs[0]
+		.to_doc_id
+		.is_none());
+	store.upsert_document(&target).await.unwrap();
+	assert_permalink_target(&store, &mention, &target).await;
+	let ambiguous = permalink_document(SourceType::ForgejoComment, "424544", "424544");
+	store.upsert_document(&ambiguous).await.unwrap();
+	for context in [
+		store.get_document(&mention.id).await.unwrap().unwrap(),
+		store.get_raw_document(&mention.id).await.unwrap().unwrap(),
+	] {
+		assert!(
+			context.outgoing_refs[0].to_doc_id.is_none(),
+			"a second raw candidate must invalidate an ambiguous permalink"
+		);
+	}
+	assert!(store.get_document(&target.id).await.unwrap().unwrap().incoming_refs.is_empty());
+	assert!(store.get_document(&ambiguous.id).await.unwrap().unwrap().incoming_refs.is_empty());
+	assert!(store.get_references(&target.id, None, 10).await.unwrap().is_empty());
+	assert!(store.get_references(url, None, 10).await.unwrap()[0].to_doc_id.is_none());
+}
+
+#[tokio::test]
+async fn forgejo_permalink_ambiguity_clears_when_a_candidate_changes_url() {
+	for write_page in [false, true] {
+		let store = SqliteStore::open_in_memory().unwrap();
+		let target = permalink_document(SourceType::ForgejoReview, "159430", "424544");
+		let mut ambiguous = permalink_document(SourceType::ForgejoComment, "424544", "424544");
+		store.upsert_document(&target).await.unwrap();
+		store.upsert_document(&ambiguous).await.unwrap();
+		let mention = store_permalink_mention(
+			&store,
+			target.metadata.as_ref().unwrap()["url"].as_str().unwrap(),
+		)
+		.await;
+		assert!(store.get_raw_document(&mention.id).await.unwrap().unwrap().outgoing_refs[0]
+			.to_doc_id
+			.is_none());
+		ambiguous.metadata = Some(
+			serde_json::json!({"url": format!("https://{FORGEJO_REPO}/pulls/4775#issuecomment-424545")}),
+		);
+		if write_page {
+			store
+				.commit_page(
+					&[ambiguous.clone()],
+					&[],
+					&[],
+					&bkb_core::model::SyncState {
+						source_id: "forgejo:test".into(),
+						last_cursor: Some("1".into()),
+						last_synced_at: Some(Utc::now()),
+						source_type: "forgejo_comment".into(),
+						source_repo: Some(FORGEJO_REPO.into()),
+						status: bkb_core::model::SyncStatus::Ok,
+						error_message: None,
+						next_run_at: None,
+						items_found: 1,
+						retry_count: 0,
+					},
+				)
+				.await
+				.unwrap();
+		} else {
+			store.upsert_document(&ambiguous).await.unwrap();
+		}
+		assert_permalink_target(&store, &mention, &target).await;
+		assert!(store.get_document(&ambiguous.id).await.unwrap().unwrap().incoming_refs.is_empty());
+	}
+}
+
+#[tokio::test]
+async fn forgejo_permalinks_repair_historical_guesses_without_replacing_references() {
+	use bkb_ingest::{queue::store_page, sources::SyncPage};
+	for target_arrives_late in [false, true] {
+		let temp = tempfile::tempdir().unwrap();
+		let path = temp.path().join("permalinks.db");
+		let store = SqliteStore::open(&path).unwrap();
+		let sql = rusqlite::Connection::open(&path).unwrap();
+		let target = permalink_document(SourceType::ForgejoReview, "159430", "424544");
+		let url = target.metadata.as_ref().unwrap()["url"].as_str().unwrap();
+		if !target_arrives_late {
+			store.upsert_document(&target).await.unwrap();
+		}
+		let mention =
+			store_permalink_mention(&store, "Historical reference absent from current text").await;
+		sql.execute("INSERT INTO refs (from_doc_id,to_doc_id,ref_type,to_external,context) VALUES (?1,?2,'mentions_pr',?3,'Preserved context')", rusqlite::params![mention.id, format!("forgejo_comment:{FORGEJO_REPO}:424544"), url]).unwrap();
+		let reference_id = sql.last_insert_rowid();
+		if target_arrives_late {
+			store.upsert_document(&target).await.unwrap();
+		} else {
+			let page = SyncPage {
+				documents: vec![mention.clone()],
+				references: vec![],
+				next_cursor: None,
+				checkpoint: Some("1".into()),
+			};
+			store_page(&store, "reconcile:v1", None, &page).await.unwrap();
+		}
+		assert_permalink_target(&store, &mention, &target).await;
+		let reference =
+			&store.get_raw_document(&mention.id).await.unwrap().unwrap().outgoing_refs[0];
+		assert_eq!(reference.id, Some(reference_id));
+		assert_eq!(reference.context.as_deref(), Some("Preserved context"));
+	}
+}
+
+#[tokio::test]
+async fn reconciliation_preserves_legacy_data_and_adds_missing_enrichment() {
+	use bkb_core::model::Reference;
+	use bkb_ingest::{queue::store_page, sources::SyncPage};
+	let temp = tempfile::tempdir().unwrap();
+	let path = temp.path().join("backfill.db");
+	let store = SqliteStore::open(&path).unwrap();
+	let sql = rusqlite::Connection::open(&path).unwrap();
+	let doc = make_doc(
+		SourceType::GithubIssue,
+		Some("bitcoin/bitcoin"),
+		"1",
+		"Discussion",
+		"Taproot and https://github.com/bitcoin/bitcoin/pull/42",
+		"alice",
+		Utc::now(),
+	);
+	let target = make_doc(
+		SourceType::GithubPr,
+		Some("bitcoin/bitcoin"),
+		"42",
+		"Implementation",
+		"Details",
+		"bob",
+		Utc::now(),
+	);
+	store.upsert_document(&doc).await.unwrap();
+	store.upsert_document(&target).await.unwrap();
+	store
+		.insert_reference(&Reference {
+			id: None,
+			from_doc_id: doc.id.clone(),
+			to_doc_id: None,
+			ref_type: RefType::MentionsPr,
+			to_external: Some("bitcoin/bitcoin#777".into()),
+			context: Some("Historical link absent from the current body".into()),
+		})
+		.await
+		.unwrap();
+	sql.execute("INSERT INTO concepts (slug, name) VALUES ('custom-tag', 'Custom tag')", [])
+		.unwrap();
+	store.upsert_concept_mention(&doc.id, "custom-tag", 0.25).await.unwrap();
+	store.upsert_concept_mention(&doc.id, "taproot", 0.5).await.unwrap();
+	let before = store.get_raw_document(&doc.id).await.unwrap().unwrap();
+	let raw_before = serde_json::to_value(&before.document).unwrap();
+	let legacy_ref = serde_json::to_value(&before.outgoing_refs[0]).unwrap();
+	let changes_before: String = sql.query_row(
+		"SELECT json_group_array(json_array(seq, doc_id, change_type, changed_at)) FROM change_log", [], |r| r.get(0),
+	).unwrap();
+	let page = SyncPage {
+		documents: vec![before.document],
+		references: vec![],
+		next_cursor: None,
+		checkpoint: Some("1".into()),
+	};
+	// Checkpoint failure must roll back every addition in the same transaction.
+	sql.execute_batch(
+		"CREATE TRIGGER reject_backfill BEFORE INSERT ON sync_state
+		WHEN NEW.source_id='reconcile:v1' BEGIN SELECT RAISE(ABORT, 'checkpoint rejected'); END;",
+	)
+	.unwrap();
+	let error = store_page(&store, "reconcile:v1", None, &page).await.unwrap_err();
+	assert!(error.to_string().contains("checkpoint rejected"));
+	assert!(store.get_sync_state("reconcile:v1").await.unwrap().is_none());
+	let after_failure = store.get_raw_document(&doc.id).await.unwrap().unwrap();
+	assert_eq!(serde_json::to_value(&after_failure.document).unwrap(), raw_before);
+	assert_eq!(after_failure.outgoing_refs.len(), 1);
+	assert_eq!(serde_json::to_value(&after_failure.outgoing_refs[0]).unwrap(), legacy_ref);
+	sql.execute_batch("DROP TRIGGER reject_backfill").unwrap();
+	for _ in 0..2 {
+		store_page(&store, "reconcile:v1", None, &page).await.unwrap();
+		let after = store.get_raw_document(&doc.id).await.unwrap().unwrap();
+		assert!(
+			after.outgoing_refs.iter().any(|r| serde_json::to_value(r).unwrap() == legacy_ref),
+			"backfill must preserve historical references that cannot be reconstructed"
+		);
+		assert_eq!(
+			serde_json::to_value(&after.document).unwrap(),
+			raw_before,
+			"backfill must preserve the complete raw document, including seq"
+		);
+		for (slug, expected) in [("custom-tag", 0.25), ("taproot", 0.5)] {
+			let confidence: f32 = sql
+				.query_row(
+					"SELECT confidence FROM concept_mentions WHERE doc_id=?1 AND concept_slug=?2",
+					rusqlite::params![doc.id, slug],
+					|r| r.get(0),
+				)
+				.unwrap();
+			assert_eq!(confidence, expected, "backfill must retain existing concept confidence");
+		}
+		let changes_after: String = sql.query_row(
+			"SELECT json_group_array(json_array(seq, doc_id, change_type, changed_at)) FROM change_log", [], |r| r.get(0),
+		).unwrap();
+		assert_eq!(changes_after, changes_before, "backfill must not manufacture raw changes");
+		assert_eq!(
+			after
+				.outgoing_refs
+				.iter()
+				.filter(|r| r.to_doc_id.as_deref() == Some(target.id.as_str()))
+				.count(),
+			1,
+			"missing references must be added exactly once across replay"
+		);
+		assert_eq!(
+			store.get_sync_state("reconcile:v1").await.unwrap().unwrap().last_cursor.as_deref(),
+			Some("1")
+		);
+	}
+}
+
+#[tokio::test]
+async fn reconciliation_uses_current_documents_instead_of_stale_page_data() {
+	use bkb_ingest::{queue::store_page, sources::SyncPage};
+	let store = SqliteStore::open_in_memory().unwrap();
+	let mut doc = make_doc(
+		SourceType::GithubIssue,
+		Some("bitcoin/bitcoin"),
+		"1",
+		"Old title",
+		"Old body references #10",
+		"alice",
+		Utc::now(),
+	);
+	store.upsert_document(&doc).await.unwrap();
+	let page = SyncPage {
+		documents: vec![store.get_raw_document(&doc.id).await.unwrap().unwrap().document],
+		references: vec![],
+		next_cursor: None,
+		checkpoint: Some("1".into()),
+	};
+	doc.title = Some("Fresh title".into());
+	doc.body = Some("Fresh body references #20 and payjoin".into());
+	doc.updated_at = Some(Utc::now());
+	store.upsert_document(&doc).await.unwrap();
+	let current = store.get_raw_document(&doc.id).await.unwrap().unwrap().document;
+	store_page(&store, "reconcile:v1", None, &page).await.unwrap();
+	let after = store.get_raw_document(&doc.id).await.unwrap().unwrap();
+	assert_eq!(
+		serde_json::to_value(&after.document).unwrap(),
+		serde_json::to_value(current).unwrap(),
+		"backfill must not overwrite an ingestion update made after page fetch"
+	);
+	assert!(
+		after.outgoing_refs.iter().any(|r| r.to_external.as_deref() == Some("bitcoin/bitcoin#20")),
+		"backfill must enrich the current body"
+	);
+	assert!(
+		!after.outgoing_refs.iter().any(|r| r.to_external.as_deref() == Some("bitcoin/bitcoin#10")),
+		"backfill must not derive new references from stale content"
+	);
+	assert!(after.concepts.contains(&"payjoin".into()));
+}
+
+#[tokio::test]
+async fn cross_forge_mirror_survives_restart_and_origin_edits() {
+	use bkb_ingest::{queue::store_page, sources::SyncPage};
+	let temp = tempfile::tempdir().unwrap();
+	let path = temp.path().join("upgrade.db");
+	let repo = "lightningdevkit/rust-lightning";
+	let fj_repo = bkb_core::repository::forgejo_identity(repo);
+	let date = Utc.with_ymd_and_hms(2026, 8, 8, 1, 2, 3).unwrap();
+	let gh_issue = make_doc(
+		SourceType::GithubIssue,
+		Some(repo),
+		"4760",
+		"Electrum script",
+		"Original report",
+		"alice",
+		date,
+	);
+	let fj_issue = make_doc(
+		SourceType::ForgejoIssue,
+		Some(&fj_repo),
+		"4866",
+		"Electrum script",
+		"Imported report",
+		"alice",
+		date,
+	);
+	let mut original = make_doc(
+		SourceType::GithubComment,
+		Some(repo),
+		"42",
+		"",
+		"Schnorr and #4760",
+		"alice",
+		date,
+	);
+	original.title = None;
+	original.parent_id = Some(gh_issue.id.clone());
+	let envelope="*[\u{60}@alice\u{60}](https://github.com/alice) [commented](https://github.com/lightningdevkit/rust-lightning/issues/4760#issuecomment-42) on GitHub:*\n\n---\n\nSchnorr and #4760\n\n<!-- issue-mirror:v1 origin=github gh_repo=lightningdevkit/rust-lightning gh_issue=4760 gh_comment=42 -->";
+	let mut copy = make_doc(
+		SourceType::ForgejoComment,
+		Some(&fj_repo),
+		"99",
+		"",
+		envelope,
+		"github-comment-mirror",
+		date + chrono::Duration::minutes(1),
+	);
+	copy.title = None;
+	copy.author_id = Some("72".into());
+	copy.parent_id = Some(fj_issue.id.clone());
+	{
+		let store = SqliteStore::open(&path).unwrap();
+		let page = SyncPage {
+			documents: vec![copy.clone(), gh_issue.clone(), fj_issue.clone()],
+			references: vec![],
+			next_cursor: Some("next-page".into()),
+			checkpoint: None,
+		};
+		store_page(&store, "fixture:forgejo", None, &page).await.unwrap();
+		assert_eq!(
+			store
+				.reconciliation_stats()
+				.await
+				.unwrap()
+				.iter()
+				.find(|s| s.0 == "unresolved_links")
+				.unwrap()
+				.1,
+			1
+		);
+	}
+	let store = SqliteStore::open(&path).unwrap();
+	assert_eq!(
+		store.get_sync_state("fixture:forgejo").await.unwrap().unwrap().last_cursor.as_deref(),
+		Some("next-page")
+	);
+	let page = SyncPage {
+		documents: vec![original.clone()],
+		references: vec![],
+		next_cursor: None,
+		checkpoint: Some("done".into()),
+	};
+	store_page(&store, "fixture:github", None, &page).await.unwrap();
+	let results = store
+		.search(SearchParams { query: "Schnorr".into(), limit: Some(1), ..Default::default() })
+		.await
+		.unwrap();
+	assert_eq!(results.results.len(), 1);
+	assert_eq!(results.results[0].id, original.id);
+	assert_eq!(results.results[0].author.as_deref(), Some("alice"));
+	assert_eq!(results.results[0].provenance.len(), 2);
+	let ctx = store.get_document(&copy.id).await.unwrap().unwrap();
+	assert_eq!(ctx.document.parent_id.as_deref(), Some(fj_issue.id.as_str()));
+	assert!(ctx.outgoing_refs.iter().any(|r| r.to_doc_id.as_deref() == Some(fj_issue.id.as_str())));
+	assert_eq!(store.timeline("taproot", None, None).await.unwrap().events.len(), 1);
+	assert_eq!(
+		store.get_raw_document(&copy.id).await.unwrap().unwrap().document.body.as_deref(),
+		Some(envelope)
+	);
+	original.body = Some("Edited original text".into());
+	original.updated_at = Some(date + chrono::Duration::hours(1));
+	store.upsert_document(&original).await.unwrap();
+	assert_eq!(store.get_document(&copy.id).await.unwrap().unwrap().document.body, original.body);
+	assert_eq!(
+		store.get_raw_document(&copy.id).await.unwrap().unwrap().document.body.as_deref(),
+		Some(envelope)
+	);
+}
+
 /// Build a test document with the given fields.
 fn make_doc(
 	source_type: SourceType, source_repo: Option<&str>, source_id: &str, title: &str, body: &str,

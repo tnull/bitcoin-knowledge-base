@@ -334,6 +334,8 @@ impl fmt::Display for RefType {
 /// Parameters for a search query.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SearchParams {
+	/// False returns the original source records without alias expansion.
+	pub deduplicate: Option<bool>,
 	pub query: String,
 	pub source_type: Option<Vec<SourceType>>,
 	pub source_repo: Option<Vec<String>>,
@@ -347,6 +349,10 @@ pub struct SearchParams {
 /// A single search result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
+	#[serde(default)]
+	pub provenance: Vec<DocumentOrigin>,
+	#[serde(default)]
+	pub matched_source_id: Option<String>,
 	pub id: String,
 	pub source_type: SourceType,
 	pub source_repo: Option<String>,
@@ -369,11 +375,27 @@ pub struct SearchResults {
 /// Full document context returned by `get_document`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentContext {
+	#[serde(default)]
+	pub provenance: Vec<DocumentOrigin>,
 	pub document: Document,
 	pub url: Option<String>,
 	pub outgoing_refs: Vec<Reference>,
 	pub incoming_refs: Vec<Reference>,
 	pub concepts: Vec<String>,
+}
+
+/// An unmodified source record contributing to a canonical result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentOrigin {
+	pub id: String,
+	pub source_type: SourceType,
+	pub source_repo: Option<String>,
+	pub url: Option<String>,
+	pub author: Option<String>,
+	pub author_id: Option<String>,
+	pub created_at: DateTime<Utc>,
+	pub updated_at: Option<DateTime<Utc>>,
+	pub evidence: Option<String>,
 }
 
 /// A timeline event for a concept.

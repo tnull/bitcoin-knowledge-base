@@ -69,6 +69,7 @@ impl SqliteStore {
 		let mut conn = self.conn.lock().await;
 		let tx = conn.transaction()?;
 		Self::write_document(&tx, doc)?;
+		crate::reconcile::reconcile(&tx, std::slice::from_ref(doc))?;
 		tx.commit()?;
 		Ok(())
 	}
@@ -76,14 +77,16 @@ impl SqliteStore {
 	fn write_document(conn: &Connection, doc: &Document) -> Result<()> {
 		let metadata_json = doc.metadata.as_ref().map(|m| serde_json::to_string(m)).transpose()?;
 
-		// Check if document exists for change_log type
-		let exists: bool = conn
-			.query_row("SELECT COUNT(*) FROM documents WHERE id = ?1", [&doc.id], |row| {
-				row.get::<_, i64>(0)
-			})
-			.map(|c| c > 0)?;
-
-		let change_type = if exists { "update" } else { "insert" };
+		// Retain the old URL so pending references can be reconsidered when
+		// this document stops being a candidate for an ambiguous permalink.
+		let previous_metadata: Option<Option<String>> = conn
+			.query_row("SELECT metadata FROM documents WHERE id = ?1", [&doc.id], |row| row.get(0))
+			.optional()?;
+		let change_type = if previous_metadata.is_some() { "update" } else { "insert" };
+		let previous_url = previous_metadata
+			.flatten()
+			.and_then(|value| serde_json::from_str::<serde_json::Value>(&value).ok())
+			.and_then(|value| value.get("url")?.as_str().map(str::to_owned));
 
 		// Insert into change_log first to get seq
 		conn.execute(
@@ -125,6 +128,12 @@ impl SqliteStore {
 			],
 		)?;
 
+		if let Some(previous_url) = previous_url {
+			if doc.url().as_deref() != Some(previous_url.as_str()) {
+				crate::reconcile::repair_permalink_url(conn, &previous_url)?;
+			}
+		}
+
 		debug!(doc_id = %doc.id, change_type, seq, "upserted document");
 		Ok(())
 	}
@@ -136,30 +145,98 @@ impl SqliteStore {
 	) -> Result<()> {
 		let mut conn = self.conn.lock().await;
 		let tx = conn.transaction()?;
+		let mut retained = std::collections::HashMap::new();
+		let mut current = Vec::with_capacity(documents.len());
+		// Git objects are immutable. Legacy cursor repair can replay them,
+		// but must not erase their historical references or custom tags.
+		for doc in documents.iter().filter(|doc| doc.source_type == SourceType::Commit) {
+			if let Some(stored) = crate::reconcile::raw(&tx, &doc.id)? {
+				retained.insert(doc.id.clone(), stored);
+			}
+		}
 		for doc in documents {
+			if let Some(stored) = retained.get(&doc.id) {
+				current.push(stored.clone());
+				continue;
+			}
 			Self::write_document(&tx, doc)?;
 			tx.execute("DELETE FROM refs WHERE from_doc_id = ?1", [&doc.id])?;
 			tx.execute("DELETE FROM concept_mentions WHERE doc_id = ?1", [&doc.id])?;
+			current.push(doc.clone());
 		}
 		for reference in references {
-			tx.execute(
-				"INSERT INTO refs (from_doc_id, to_doc_id, ref_type, to_external, context)
-				 VALUES (?1, ?2, ?3, ?4, ?5)",
-				rusqlite::params![
-					reference.from_doc_id,
-					reference.to_doc_id,
-					reference.ref_type.as_str(),
-					reference.to_external,
-					reference.context
-				],
-			)?;
+			if !retained.contains_key(&reference.from_doc_id) {
+				Self::write_reference(&tx, reference)?;
+			}
 		}
 		for (doc_id, slug, confidence) in mentions {
+			if retained.contains_key(doc_id) {
+				continue;
+			}
 			tx.execute(
 				"INSERT OR REPLACE INTO concept_mentions VALUES (?1, ?2, ?3)",
 				rusqlite::params![doc_id, slug, confidence],
 			)?;
 		}
+		crate::reconcile::reconcile(&tx, &current)?;
+		Self::write_sync_state(&tx, state)?;
+		tx.commit()?;
+		Ok(())
+	}
+
+	/// Add local reconciliation evidence without replacing previously ingested data.
+	/// Read and enrich current documents in the checkpoint transaction so a stale
+	/// backfill page cannot overwrite, or derive evidence from, an older snapshot.
+	pub async fn reconcile_page<F>(
+		&self, document_ids: &[String], state: &SyncState, enrich: F,
+	) -> Result<()>
+	where
+		F: Fn(&Document) -> (Vec<Reference>, Vec<(String, f32)>),
+	{
+		let mut conn = self.conn.lock().await;
+		let tx = conn.transaction()?;
+		let mut documents = Vec::new();
+		for id in document_ids {
+			let Some(doc) = crate::reconcile::raw(&tx, id)? else {
+				continue;
+			};
+			crate::reconcile::repair_permalink_refs(&tx, &doc)?;
+			let (mut references, mentions) = enrich(&doc);
+			if let Some(parent) = &doc.parent_id {
+				references.push(Reference {
+					id: None,
+					from_doc_id: doc.id.clone(),
+					to_doc_id: Some(parent.clone()),
+					ref_type: RefType::RepliesTo,
+					to_external: None,
+					context: None,
+				});
+			}
+			for reference in references {
+				let target = crate::reconcile::reference_target(&tx, &reference)?;
+				tx.execute(
+					"INSERT INTO refs (from_doc_id, to_doc_id, ref_type, to_external, context)
+					 SELECT ?1, ?2, ?3, ?4, ?5 WHERE NOT EXISTS (
+					 SELECT 1 FROM refs WHERE from_doc_id=?1 AND to_doc_id IS ?2
+					 AND ref_type=?3 AND to_external IS ?4)",
+					rusqlite::params![
+						reference.from_doc_id,
+						target,
+						reference.ref_type.as_str(),
+						reference.to_external,
+						reference.context
+					],
+				)?;
+			}
+			for (slug, confidence) in mentions {
+				tx.execute(
+					"INSERT OR IGNORE INTO concept_mentions (doc_id, concept_slug, confidence) VALUES (?1, ?2, ?3)",
+					rusqlite::params![doc.id, slug, confidence],
+				)?;
+			}
+			documents.push(doc);
+		}
+		crate::reconcile::reconcile(&tx, &documents)?;
 		Self::write_sync_state(&tx, state)?;
 		tx.commit()?;
 		Ok(())
@@ -168,17 +245,60 @@ impl SqliteStore {
 	/// Insert a cross-reference.
 	pub async fn insert_reference(&self, reference: &Reference) -> Result<()> {
 		let conn = self.conn.lock().await;
+		Self::write_reference(&conn, reference)
+	}
+
+	fn write_reference(conn: &Connection, reference: &Reference) -> Result<()> {
+		let target = crate::reconcile::reference_target(conn, reference)?;
 		conn.execute(
 			"INSERT INTO refs (from_doc_id, to_doc_id, ref_type, to_external, context)
 			 VALUES (?1, ?2, ?3, ?4, ?5)",
 			rusqlite::params![
 				&reference.from_doc_id,
-				&reference.to_doc_id,
+				target,
 				reference.ref_type.as_str(),
 				&reference.to_external,
 				&reference.context,
 			],
 		)?;
+		Ok(())
+	}
+
+	/// Delete all references originating from a document (for re-enrichment).
+	pub async fn replace_enrichment(
+		&self, doc_id: &str, references: &[Reference], concepts: &[(String, f32)],
+	) -> Result<()> {
+		let mut conn = self.conn.lock().await;
+		let tx = conn.transaction()?;
+		let Some(doc) = crate::reconcile::raw(&tx, doc_id)? else {
+			return Ok(());
+		};
+		tx.execute("DELETE FROM refs WHERE from_doc_id=?1", [doc_id])?;
+		tx.execute("DELETE FROM concept_mentions WHERE doc_id=?1", [doc_id])?;
+		for reference in references {
+			Self::write_reference(&tx, reference)?;
+		}
+		if let Some(parent) = &doc.parent_id {
+			Self::write_reference(
+				&tx,
+				&Reference {
+					id: None,
+					from_doc_id: doc_id.into(),
+					to_doc_id: Some(parent.clone()),
+					ref_type: RefType::RepliesTo,
+					to_external: None,
+					context: None,
+				},
+			)?;
+		}
+		for (slug, confidence) in concepts {
+			tx.execute(
+				"INSERT OR REPLACE INTO concept_mentions VALUES (?1,?2,?3)",
+				rusqlite::params![doc_id, slug, confidence],
+			)?;
+		}
+		crate::reconcile::reconcile(&tx, &[doc])?;
+		tx.commit()?;
 		Ok(())
 	}
 
@@ -283,6 +403,31 @@ impl SqliteStore {
 			})?
 			.collect::<rusqlite::Result<Vec<_>>>()?;
 		Ok(rows)
+	}
+
+	/// Read a bounded raw page for the resumable cross-forge upgrade job.
+	pub async fn reconciliation_page(&self, after: i64) -> Result<Vec<(i64, Document)>> {
+		let conn = self.conn.lock().await;
+		let mut stmt=conn.prepare("SELECT rowid,id FROM documents WHERE rowid>?1 AND (source_type GLOB 'github_*' OR source_type GLOB 'forgejo_*' OR source_type='commit') ORDER BY rowid LIMIT 200")?;
+		let rows = stmt
+			.query_map([after], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+			.collect::<rusqlite::Result<Vec<_>>>()?;
+		rows.into_iter()
+			.map(|(rowid, id)| Ok((rowid, crate::reconcile::raw(&conn, &id)?.unwrap())))
+			.collect()
+	}
+
+	/// Counts for monitoring the raw/derived boundary and missing mirror targets.
+	pub async fn reconciliation_stats(&self) -> Result<Vec<(&'static str, i64)>> {
+		let conn = self.conn.lock().await;
+		let mut stats = vec![];
+		for (name,sql) in [
+			("raw_documents","SELECT COUNT(*) FROM documents"),
+			("canonical_documents","SELECT COUNT(*) FROM documents WHERE id NOT IN (SELECT doc_id FROM document_aliases WHERE doc_id!=canonical_id)"),
+			("verified_links","SELECT COUNT(*) FROM document_links"),
+			("unresolved_links","SELECT COUNT(*) FROM document_links l LEFT JOIN document_aliases a ON a.doc_id=l.doc_id LEFT JOIN document_aliases b ON b.doc_id=l.target_id WHERE a.canonical_id IS NULL OR b.canonical_id IS NULL OR a.canonical_id!=b.canonical_id")
+		] { stats.push((name,conn.query_row(sql,[],|r|r.get(0))?)); }
+		Ok(stats)
 	}
 
 	/// Get document counts grouped by source type.
@@ -527,7 +672,14 @@ impl SqliteStore {
 		let concepts: Vec<String> =
 			stmt.query_map([doc_id], |row| row.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
 
-		Ok(Some(DocumentContext { document: doc, url, outgoing_refs, incoming_refs, concepts }))
+		Ok(Some(DocumentContext {
+			provenance: vec![],
+			document: doc,
+			url,
+			outgoing_refs,
+			incoming_refs,
+			concepts,
+		}))
 	}
 }
 
@@ -550,6 +702,7 @@ impl<T> OptionalRow<T> for rusqlite::Result<T> {
 impl KnowledgeStore for SqliteStore {
 	async fn search(&self, params: SearchParams) -> Result<SearchResults> {
 		let conn = self.conn.lock().await;
+		let deduplicate = params.deduplicate != Some(false);
 		let limit = params.limit.unwrap_or(20).min(100);
 
 		let query_trimmed = params.query.trim();
@@ -601,6 +754,7 @@ impl KnowledgeStore for SqliteStore {
 			)
 		};
 
+		let filter_start = sql.len();
 		// Source type filter
 		if let Some(ref source_types) = params.source_type {
 			if !source_types.is_empty() {
@@ -619,11 +773,22 @@ impl KnowledgeStore for SqliteStore {
 
 		// Source repo filter
 		if let Some(ref repos) = params.source_repo {
+			let mut repos: Vec<String> = repos
+				.iter()
+				.map(|repo| repo.strip_prefix("github.com/").unwrap_or(repo).to_owned())
+				.collect();
+			if deduplicate {
+				for repo in params.source_repo.as_ref().unwrap() {
+					if bkb_core::repository::is_migrated(repo) {
+						repos.push(bkb_core::repository::forgejo_identity(repo));
+					}
+				}
+			}
 			if !repos.is_empty() {
 				let placeholders: Vec<String> =
 					repos.iter().enumerate().map(|(i, _)| format!("?{}", param_idx + i)).collect();
 				sql.push_str(&format!(" AND d.source_repo IN ({})", placeholders.join(",")));
-				for repo in repos {
+				for repo in &repos {
 					param_values.push(Box::new(repo.clone()));
 					param_idx += 1;
 				}
@@ -650,11 +815,25 @@ impl KnowledgeStore for SqliteStore {
 			let _ = param_idx;
 		}
 
-		if is_wildcard {
-			sql.push_str(" ORDER BY d.created_at DESC LIMIT ?");
-		} else {
-			sql.push_str(" ORDER BY score LIMIT ?");
+		if deduplicate {
+			let filters = sql.split_off(filter_start).replace("d.", "f.");
+			if !filters.is_empty() {
+				// Build the matching canonical-ID set once. A correlated EXISTS
+				// would rescan matching filter rows for every FTS or wildcard hit.
+				sql.push_str(&format!(" AND COALESCE(a.canonical_id,d.id) IN (SELECT COALESCE(fa.canonical_id,f.id) FROM documents f LEFT JOIN document_aliases fa ON fa.doc_id=f.id WHERE 1=1{filters})"));
+			}
+			sql = sql.replace("d.source_id, d.parent_id, d.metadata", "d.source_id, d.parent_id, d.metadata, COALESCE(a.canonical_id,d.id) AS canonical_id");
+			// Both wildcard and FTS queries retain the original matching row for
+			// snippet provenance. Materialize bm25 before applying a window.
+			let where_pos = sql.find(" WHERE ").unwrap();
+			sql.insert_str(where_pos, " LEFT JOIN document_aliases a ON a.doc_id=d.id ");
+			sql = format!("WITH hits AS MATERIALIZED ({sql}), ranked AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY canonical_id ORDER BY score,id) AS duplicate_rank FROM hits) SELECT * FROM ranked WHERE duplicate_rank=1");
 		}
+		sql.push_str(if is_wildcard {
+			" ORDER BY created_at DESC, id LIMIT ?"
+		} else {
+			" ORDER BY score, id LIMIT ?"
+		});
 		param_values.push(Box::new(limit as i64));
 
 		let param_refs: Vec<&dyn rusqlite::types::ToSql> =
@@ -688,6 +867,8 @@ impl KnowledgeStore for SqliteStore {
 					seq: None,
 				};
 				Ok(SearchResult {
+					provenance: vec![],
+					matched_source_id: None,
 					id: row.get(0)?,
 					source_type,
 					source_repo,
@@ -720,156 +901,50 @@ impl KnowledgeStore for SqliteStore {
 			})
 			.collect();
 
+		let mut results = results;
+		if deduplicate {
+			for result in &mut results {
+				let doc = crate::reconcile::projected(&conn, &result.id)?.unwrap();
+				result.url = doc.url();
+				result.provenance = crate::reconcile::origins(&conn, &doc.id)?;
+				result.concepts = crate::reconcile::concepts(&conn, &doc.id)?;
+				result.matched_source_id = Some(result.id.clone());
+				result.id = doc.id;
+				result.source_type = doc.source_type;
+				result.source_repo = doc.source_repo;
+				result.title = doc.title;
+				result.author = doc.author;
+				result.created_at = doc.created_at;
+			}
+		}
 		let total_count = results.len() as u32;
 		Ok(SearchResults { results, total_count })
 	}
 
 	async fn get_document(&self, id: &str) -> Result<Option<DocumentContext>> {
 		let conn = self.conn.lock().await;
-
-		// Fetch document
-		let doc = conn
-			.query_row(
-				"SELECT id, source_type, source_repo, source_id, title, body,
-				 author, author_id, created_at, updated_at, parent_id, metadata, seq
-				 FROM documents WHERE id = ?1",
-				[id],
-				|row| {
-					let source_type_str: String = row.get(1)?;
-					let created_at_str: String = row.get(8)?;
-					let updated_at_str: Option<String> = row.get(9)?;
-					let metadata_str: Option<String> = row.get(11)?;
-					Ok(Document {
-						id: row.get(0)?,
-						source_type: SourceType::from_str(&source_type_str)
-							.unwrap_or(SourceType::GithubIssue),
-						source_repo: row.get(2)?,
-						source_id: row.get(3)?,
-						title: row.get(4)?,
-						body: row.get(5)?,
-						author: row.get(6)?,
-						author_id: row.get(7)?,
-						created_at: chrono::DateTime::parse_from_rfc3339(&created_at_str)
-							.map(|dt| dt.with_timezone(&chrono::Utc))
-							.unwrap_or_else(|_| chrono::Utc::now()),
-						updated_at: updated_at_str.and_then(|s| {
-							chrono::DateTime::parse_from_rfc3339(&s)
-								.ok()
-								.map(|dt| dt.with_timezone(&chrono::Utc))
-						}),
-						parent_id: row.get(10)?,
-						metadata: metadata_str.and_then(|s| serde_json::from_str(&s).ok()),
-						seq: row.get(12)?,
-					})
-				},
-			)
-			.optional()?;
-
-		let doc = match doc {
-			Some(d) => d,
-			None => return Ok(None),
-		};
-
-		let url = doc.url();
-
-		// Fetch outgoing refs
-		let mut stmt = conn.prepare(
-			"SELECT id, from_doc_id, to_doc_id, ref_type, to_external, context
-			 FROM refs WHERE from_doc_id = ?1",
-		)?;
-		let outgoing_refs = stmt
-			.query_map([id], |row| {
-				let ref_type_str: String = row.get(3)?;
-				Ok(Reference {
-					id: row.get(0)?,
-					from_doc_id: row.get(1)?,
-					to_doc_id: row.get(2)?,
-					ref_type: RefType::from_str(&ref_type_str).unwrap_or(RefType::MentionsIssue),
-					to_external: row.get(4)?,
-					context: row.get(5)?,
-				})
-			})?
-			.collect::<rusqlite::Result<Vec<_>>>()?;
-
-		// Fetch incoming refs
-		let mut stmt = conn.prepare(
-			"SELECT id, from_doc_id, to_doc_id, ref_type, to_external, context
-			 FROM refs WHERE to_doc_id = ?1",
-		)?;
-		let incoming_refs = stmt
-			.query_map([id], |row| {
-				let ref_type_str: String = row.get(3)?;
-				Ok(Reference {
-					id: row.get(0)?,
-					from_doc_id: row.get(1)?,
-					to_doc_id: row.get(2)?,
-					ref_type: RefType::from_str(&ref_type_str).unwrap_or(RefType::MentionsIssue),
-					to_external: row.get(4)?,
-					context: row.get(5)?,
-				})
-			})?
-			.collect::<rusqlite::Result<Vec<_>>>()?;
-
-		// Fetch concept tags
-		let mut stmt =
-			conn.prepare("SELECT concept_slug FROM concept_mentions WHERE doc_id = ?1")?;
-		let concepts: Vec<String> =
-			stmt.query_map([id], |row| row.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
-
-		Ok(Some(DocumentContext { document: doc, url, outgoing_refs, incoming_refs, concepts }))
+		crate::reconcile::context(&conn, id, true)
 	}
 
+	async fn get_raw_document(&self, id: &str) -> Result<Option<DocumentContext>> {
+		let conn = self.conn.lock().await;
+		crate::reconcile::context(&conn, id, false)
+	}
 	async fn get_references(
 		&self, entity: &str, ref_type: Option<&str>, limit: u32,
 	) -> Result<Vec<Reference>> {
 		let conn = self.conn.lock().await;
-
-		let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = match ref_type {
-			Some(rt) => (
-				"SELECT r.id, r.from_doc_id, r.to_doc_id, r.ref_type, r.to_external, r.context \
-				 FROM refs r \
-				 WHERE r.to_external = ?1 AND r.ref_type = ?2 \
-				 ORDER BY r.id \
-				 LIMIT ?3"
-					.to_string(),
-				vec![
-					Box::new(entity.to_string()),
-					Box::new(rt.to_string()),
-					Box::new(limit as i64),
-				],
-			),
-			None => (
-				"SELECT r.id, r.from_doc_id, r.to_doc_id, r.ref_type, r.to_external, r.context \
-				 FROM refs r \
-				 WHERE r.to_external = ?1 \
-				 ORDER BY r.id \
-				 LIMIT ?2"
-					.to_string(),
-				vec![Box::new(entity.to_string()), Box::new(limit as i64)],
-			),
-		};
-
-		let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-			params.iter().map(|b| b.as_ref()).collect();
-
-		let mut stmt = conn.prepare(&sql)?;
+		let target = crate::reconcile::external_id(&conn, entity)?
+			.unwrap_or(crate::reconcile::canonical_id(&conn, entity)?);
+		let mut stmt=conn.prepare("SELECT r.id,r.from_doc_id,r.to_doc_id,r.ref_type,r.to_external,r.context FROM refs r LEFT JOIN document_aliases fa ON fa.doc_id=r.from_doc_id LEFT JOIN document_aliases ta ON ta.doc_id=r.to_doc_id WHERE (r.to_external=?1 OR COALESCE(ta.canonical_id,r.to_doc_id)=?2) AND (?3 IS NULL OR r.ref_type=?3) GROUP BY COALESCE(fa.canonical_id,r.from_doc_id),COALESCE(ta.canonical_id,r.to_doc_id,r.to_external),r.ref_type ORDER BY MIN(r.id) LIMIT ?4")?;
 		let refs = stmt
-			.query_map(param_refs.as_slice(), |row| {
-				let ref_type_str: String = row.get(3)?;
-				Ok(Reference {
-					id: row.get(0)?,
-					from_doc_id: row.get(1)?,
-					to_doc_id: row.get(2)?,
-					ref_type: RefType::from_str(&ref_type_str).unwrap_or(RefType::MentionsIssue),
-					to_external: row.get(4)?,
-					context: row.get(5)?,
-				})
-			})?
+			.query_map(
+				rusqlite::params![entity, target, ref_type, limit.min(1000)],
+				crate::reconcile::reference_row,
+			)?
 			.collect::<rusqlite::Result<Vec<_>>>()?;
-
-		Ok(refs)
+		crate::reconcile::canonical_refs(&conn, refs)
 	}
-
 	async fn lookup_bip(&self, number: u32) -> Result<Option<DocumentContext>> {
 		self.lookup_spec(SourceType::Bip, number).await
 	}
@@ -895,83 +970,37 @@ impl KnowledgeStore for SqliteStore {
 		before: Option<chrono::DateTime<chrono::Utc>>,
 	) -> Result<bkb_core::model::Timeline> {
 		let conn = self.conn.lock().await;
-
-		let mut sql = String::from(
-			"SELECT d.id, d.source_type, d.title, d.created_at, d.source_repo, d.source_id,
-				d.parent_id, d.metadata
-			 FROM concept_mentions cm
-			 JOIN documents d ON d.id = cm.doc_id
-			 WHERE cm.concept_slug = ?1",
-		);
-
-		let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
-			vec![Box::new(concept.to_string())];
-		let mut param_idx = 2;
-
-		if let Some(ref after) = after {
-			sql.push_str(&format!(" AND d.created_at >= ?{}", param_idx));
-			param_values.push(Box::new(after.to_rfc3339()));
-			param_idx += 1;
-		}
-
-		if let Some(ref before) = before {
-			sql.push_str(&format!(" AND d.created_at <= ?{}", param_idx));
-			param_values.push(Box::new(before.to_rfc3339()));
-			let _ = param_idx;
-		}
-
-		sql.push_str(" ORDER BY d.created_at ASC LIMIT 200");
-
-		let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-			param_values.iter().map(|b| b.as_ref()).collect();
-
-		let mut stmt = conn.prepare(&sql)?;
-
-		let events: Vec<bkb_core::model::TimelineEvent> = stmt
-			.query_map(param_refs.as_slice(), |row| {
-				let source_type_str: String = row.get(1)?;
-				let created_at_str: String = row.get(3)?;
-				let source_type =
-					SourceType::from_str(&source_type_str).unwrap_or(SourceType::GithubIssue);
-				let source_repo: Option<String> = row.get(4)?;
-				let source_id: String = row.get(5)?;
-				let parent_id: Option<String> = row.get(6)?;
-				let metadata_str: Option<String> = row.get(7)?;
-				let doc = Document {
-					id: String::new(),
-					source_type: source_type.clone(),
-					source_repo: source_repo.clone(),
-					source_id,
-					title: None,
-					body: None,
-					author: None,
-					author_id: None,
-					created_at: chrono::Utc::now(),
-					updated_at: None,
-					parent_id,
-					metadata: metadata_str.and_then(|s| serde_json::from_str(&s).ok()),
-					seq: None,
-				};
-				let date = created_at_str.get(..10).unwrap_or(&created_at_str).to_string();
-				Ok(bkb_core::model::TimelineEvent {
-					date,
-					source_type,
-					title: row.get(2)?,
-					id: row.get(0)?,
-					url: doc.url(),
-				})
-			})?
+		let mut stmt=conn.prepare("SELECT COALESCE(a.canonical_id,d.id) AS canonical FROM concept_mentions cm JOIN documents d ON d.id=cm.doc_id LEFT JOIN document_aliases a ON a.doc_id=d.id WHERE cm.concept_slug=?1 AND (?2 IS NULL OR d.created_at>=?2) AND (?3 IS NULL OR d.created_at<=?3) GROUP BY canonical ORDER BY MIN(d.created_at),canonical LIMIT 200")?;
+		let ids = stmt
+			.query_map(
+				rusqlite::params![
+					concept,
+					after.map(|d| d.to_rfc3339()),
+					before.map(|d| d.to_rfc3339())
+				],
+				|r| r.get::<_, String>(0),
+			)?
 			.collect::<rusqlite::Result<Vec<_>>>()?;
-
-		Ok(bkb_core::model::Timeline { concept: concept.to_string(), events })
+		let mut events = vec![];
+		for id in ids {
+			let doc = crate::reconcile::projected(&conn, &id)?.unwrap();
+			events.push(bkb_core::model::TimelineEvent {
+				url: doc.url(),
+				date: doc.created_at.format("%Y-%m-%d").to_string(),
+				id: doc.id,
+				source_type: doc.source_type,
+				title: doc.title,
+			});
+		}
+		Ok(bkb_core::model::Timeline { concept: concept.into(), events })
 	}
-
 	async fn find_commit(
 		&self, query: &str, repo: Option<&str>,
 	) -> Result<Vec<bkb_core::model::CommitContext>> {
 		// Search commits first, then also search PRs as fallback context.
 		let mut source_types = vec![SourceType::Commit];
 		source_types.push(SourceType::GithubPr);
+		source_types.push(SourceType::ForgejoPr);
 
 		let params = SearchParams {
 			query: query.to_string(),
@@ -1013,63 +1042,40 @@ impl KnowledgeStore for SqliteStore {
 }
 
 impl SqliteStore {
-	/// Find PRs that reference a given commit SHA by searching PR bodies for
-	/// the SHA prefix.
+	/// Prefer exact merge metadata; explicit SHA mentions remain useful context.
 	async fn find_associated_prs(
 		&self, commit_sha: &str, source_repo: Option<&str>,
 	) -> Result<Vec<SearchResult>> {
 		let conn = self.conn.lock().await;
-		let sha = commit_sha.to_string();
-		let repo = source_repo.map(String::from);
-
-		// Search for PRs that mention this commit SHA (use 12-char prefix)
-		let sha_prefix = &sha[..sha.len().min(12)];
-
-		let mut sql = String::from(
-			"SELECT d.id, d.source_type, d.source_repo, d.title, d.author, d.created_at \
-			 FROM documents d \
-			 JOIN documents_fts ON documents_fts.rowid = d.rowid \
-			 WHERE d.source_type = 'github_pr' \
-			 AND documents_fts MATCH ?1",
-		);
-
-		let fts_sha = build_fts_query(sha_prefix);
-		let params: Vec<Box<dyn rusqlite::types::ToSql>> = if let Some(ref repo) = repo {
-			sql.push_str(" AND d.source_repo = ?2");
-			vec![Box::new(fts_sha.clone()), Box::new(repo.clone())]
-		} else {
-			vec![Box::new(fts_sha.clone())]
-		};
-
-		sql.push_str(" LIMIT 5");
-
-		let mut stmt = conn.prepare(&sql)?;
-		let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-			params.iter().map(|p| p.as_ref()).collect();
-
-		let results = stmt
-			.query_map(param_refs.as_slice(), |row| {
-				Ok(SearchResult {
-					id: row.get(0)?,
-					source_type: SourceType::from_str(&row.get::<_, String>(1)?)
-						.unwrap_or(SourceType::GithubPr),
-					source_repo: row.get(2)?,
-					title: row.get(3)?,
-					snippet: None,
-					author: row.get(4)?,
-					created_at: row
-						.get::<_, String>(5)
-						.ok()
-						.and_then(|s| s.parse().ok())
-						.unwrap_or_else(chrono::Utc::now),
-					score: 0.0,
-					url: None,
-					concepts: Vec::new(),
-				})
+		let fj_repo = source_repo
+			.filter(|r| bkb_core::repository::is_migrated(r))
+			.map(bkb_core::repository::forgejo_identity);
+		let fts = build_fts_query(&commit_sha[..commit_sha.len().min(12)]);
+		let mut stmt=conn.prepare("SELECT COALESCE(a.canonical_id,d.id) AS canonical FROM documents d LEFT JOIN document_aliases a ON a.doc_id=d.id WHERE d.source_type IN ('github_pr','forgejo_pr') AND (?1 IS NULL OR d.source_repo IN (?1,?2)) AND (json_extract(d.metadata,'$.merge_commit_sha')=?3 OR d.rowid IN (SELECT rowid FROM documents_fts WHERE documents_fts MATCH ?4)) GROUP BY canonical ORDER BY MAX(json_extract(d.metadata,'$.merge_commit_sha')=?3) DESC,canonical LIMIT 5")?;
+		let ids = stmt
+			.query_map(rusqlite::params![source_repo, fj_repo, commit_sha, fts], |r| {
+				r.get::<_, String>(0)
 			})?
-			.filter_map(|r| r.ok())
-			.collect();
-
+			.collect::<rusqlite::Result<Vec<_>>>()?;
+		let mut results = vec![];
+		for id in ids {
+			let ctx = crate::reconcile::context(&conn, &id, true)?.unwrap();
+			let doc = ctx.document;
+			results.push(SearchResult {
+				id: doc.id,
+				source_type: doc.source_type,
+				source_repo: doc.source_repo,
+				title: doc.title,
+				snippet: None,
+				author: doc.author,
+				created_at: doc.created_at,
+				score: 0.0,
+				url: ctx.url,
+				concepts: ctx.concepts,
+				provenance: ctx.provenance,
+				matched_source_id: None,
+			});
+		}
 		Ok(results)
 	}
 }
@@ -1213,6 +1219,117 @@ mod tests {
 
 		assert_eq!(results.results.len(), 1);
 		assert!(results.results[0].title.as_deref().unwrap().contains("taproot"));
+	}
+
+	#[tokio::test]
+	async fn test_filtered_fts_search_instruction_budget() {
+		assert_filtered_search_instruction_budget("taproot").await;
+	}
+
+	#[tokio::test]
+	async fn test_filtered_wildcard_search_instruction_budget() {
+		assert_filtered_search_instruction_budget("*").await;
+	}
+
+	async fn assert_filtered_search_instruction_budget(query: &str) {
+		let store = SqliteStore::open_in_memory().unwrap();
+		for number in 0..1024 {
+			let mut doc = test_doc(
+				&format!("github_issue:bitcoin/bitcoin:{number}"),
+				"Taproot support",
+				"Implementing taproot",
+			);
+			doc.source_id = number.to_string();
+			store.upsert_document(&doc).await.unwrap();
+		}
+
+		// Count SQLite VM instructions rather than elapsed time. This budget
+		// leaves room for sorting and projection, but rejects rescanning all
+		// matching filter rows for each result, even without any duplicates.
+		let mut remaining_callbacks = 500;
+		store.conn.lock().await.progress_handler(
+			1000,
+			Some(move || {
+				remaining_callbacks -= 1;
+				remaining_callbacks == 0
+			}),
+		);
+		let results = store
+			.search(SearchParams {
+				query: query.to_string(),
+				author: Some("satoshi".into()),
+				limit: Some(20),
+				..Default::default()
+			})
+			.await;
+		store.conn.lock().await.progress_handler(0, None::<fn() -> bool>);
+		assert!(
+			results.is_ok(),
+			"filtered search must finish within 500,000 SQLite VM instructions: {results:?}"
+		);
+		assert_eq!(results.unwrap().results.len(), 20);
+	}
+
+	#[tokio::test]
+	async fn test_canonical_filters_match_one_member_independently_of_fts() {
+		let store = SqliteStore::open_in_memory().unwrap();
+		let mut matching_origin = String::new();
+		let mut matching_canonical = String::new();
+		for (number, github_author, forgejo_author) in [(1, "bob", "alice"), (2, "alice", "bob")] {
+			let mut gh = test_doc("", "Historical title", "Taproot implementation");
+			gh.source_repo = Some("lightningdevkit/rust-lightning".into());
+			gh.source_id = number.to_string();
+			gh.id = Document::make_id(&gh.source_type, gh.source_repo.as_deref(), &gh.source_id);
+			gh.author = Some(github_author.into());
+			let mut fj = gh.clone();
+			fj.source_type = SourceType::ForgejoIssue;
+			fj.source_repo =
+				Some(bkb_core::repository::forgejo_identity("lightningdevkit/rust-lightning"));
+			fj.id = Document::make_id(&fj.source_type, fj.source_repo.as_deref(), &fj.source_id);
+			fj.body = Some("Current discussion".into());
+			fj.author = Some(forgejo_author.into());
+			store.upsert_document(&gh).await.unwrap();
+			store.upsert_document(&fj).await.unwrap();
+			// Model verified imports whose text and authors differ across hosts.
+			for id in [&gh.id, &fj.id] {
+				store.conn.lock().await.execute(
+					"INSERT INTO document_aliases (doc_id, canonical_id, origin_id, evidence) VALUES (?1, ?2, ?3, 'test')",
+					rusqlite::params![id, fj.id, gh.id],
+				).unwrap();
+			}
+			if number == 1 {
+				matching_origin = gh.id;
+				matching_canonical = fj.id;
+			}
+		}
+
+		for query in ["taproot", "*"] {
+			let params = SearchParams {
+				query: query.into(),
+				source_type: Some(vec![SourceType::ForgejoIssue]),
+				author: Some("alice".into()),
+				..Default::default()
+			};
+			let results = store.search(params.clone()).await.unwrap();
+			assert_eq!(results.results.len(), 1, "both filters must match the same member");
+			assert_eq!(results.results[0].id, matching_canonical);
+			if query == "taproot" {
+				assert_eq!(
+					results.results[0].matched_source_id.as_deref(),
+					Some(matching_origin.as_str())
+				);
+				assert!(results.results[0].snippet.as_deref().unwrap().contains("Taproot"));
+			}
+
+			let raw =
+				store.search(SearchParams { deduplicate: Some(false), ..params }).await.unwrap();
+			if query == "taproot" {
+				assert!(raw.results.is_empty(), "raw search requires FTS and filters on one row");
+			} else {
+				assert_eq!(raw.results.len(), 1);
+				assert_eq!(raw.results[0].id, matching_canonical);
+			}
+		}
 	}
 
 	/// Regression test: queries containing `:` must not trigger FTS5

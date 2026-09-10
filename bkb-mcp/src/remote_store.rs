@@ -25,6 +25,9 @@ impl RemoteApiStore {
 impl KnowledgeStore for RemoteApiStore {
 	async fn search(&self, params: SearchParams) -> Result<SearchResults> {
 		let mut url = format!("{}/search?q={}", self.base_url, urlencoded(&params.query));
+		if let Some(value) = params.deduplicate {
+			url.push_str(&format!("&deduplicate={value}"));
+		}
 
 		if let Some(ref source_types) = params.source_type {
 			let types_str: String =
@@ -83,6 +86,15 @@ impl KnowledgeStore for RemoteApiStore {
 		let ctx: DocumentContext =
 			response.json().await.context("failed to parse document response")?;
 		Ok(Some(ctx))
+	}
+
+	async fn get_raw_document(&self, id: &str) -> Result<Option<DocumentContext>> {
+		let url = format!("{}/document/{}?raw=true", self.base_url, urlencoded(id));
+		let response = self.client.get(url).send().await?;
+		if response.status() == reqwest::StatusCode::NOT_FOUND {
+			return Ok(None);
+		}
+		Ok(Some(response.error_for_status()?.json().await?))
 	}
 
 	async fn get_references(

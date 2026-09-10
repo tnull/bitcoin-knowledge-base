@@ -167,6 +167,7 @@ async fn tool_search(store: &impl KnowledgeStore, args: &serde_json::Value) -> R
 	let limit = args.get("limit").and_then(|v| v.as_u64()).map(|n| n as u32);
 
 	let params = SearchParams {
+		deduplicate: args.get("deduplicate").and_then(|v| v.as_bool()),
 		query,
 		source_type,
 		source_repo,
@@ -189,7 +190,12 @@ async fn tool_get_document(
 		.and_then(|v| v.as_str())
 		.ok_or_else(|| anyhow::anyhow!("missing required parameter: id"))?;
 
-	match store.get_document(id).await? {
+	let result = if args.get("raw").and_then(|v| v.as_bool()).unwrap_or(false) {
+		store.get_raw_document(id).await?
+	} else {
+		store.get_document(id).await?
+	};
+	match result {
 		Some(ctx) => Ok(serde_json::to_string_pretty(&ctx)?),
 		None => Ok(format!("Document not found: {}", id)),
 	}
@@ -338,6 +344,11 @@ fn tool_definitions() -> serde_json::Value {
 						"type": "boolean",
 						"description": "Enable embedding similarity search"
 					},
+					"deduplicate": {
+						"type": "boolean",
+						"default": true,
+						"description": "Collapse verified cross-forge copies; false returns original records"
+					},
 					"limit": {
 						"type": "integer",
 						"description": "Max results (default 20)"
@@ -352,6 +363,7 @@ fn tool_definitions() -> serde_json::Value {
 			"inputSchema": {
 				"type": "object",
 				"properties": {
+					"raw": { "type": "boolean", "default": false, "description": "Return this exact source record without resolving its canonical alias" },
 					"id": {
 						"type": "string",
 						"description": "Document ID (e.g. github_issue:bitcoin/bitcoin:12345)"
@@ -493,6 +505,40 @@ fn tool_definitions() -> serde_json::Value {
 			}
 		}
 	])
+}
+
+#[cfg(test)]
+mod cross_forge_tests {
+	use super::*;
+	use tokio::io::{AsyncReadExt, AsyncWriteExt};
+	#[tokio::test]
+	async fn mcp_forwards_raw_and_deduplication_options() {
+		let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+		let addr = listener.local_addr().unwrap();
+		let handle = tokio::spawn(async move {
+			let mut requests = vec![];
+			for (status, body) in
+				[("200 OK", r#"{"results":[],"total_count":0}"#), ("404 Not Found", "{}")]
+			{
+				let (mut socket, _) = listener.accept().await.unwrap();
+				let mut buf = [0; 8192];
+				let n = socket.read(&mut buf).await.unwrap();
+				requests.push(String::from_utf8_lossy(&buf[..n]).into_owned());
+				socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+			}
+			requests
+		});
+		let store = crate::remote_store::RemoteApiStore::new(&format!("http://{addr}"));
+		tool_search(&store,&serde_json::json!({"query":"Electrum","source_repo":"git.rust-bitcoin.org/lightningdevkit/rust-lightning","deduplicate":false})).await.unwrap();
+		tool_get_document(&store,&serde_json::json!({"id":"forgejo_issue:git.rust-bitcoin.org/lightningdevkit/rust-lightning:4866","raw":true})).await.unwrap();
+		let requests = handle.await.unwrap();
+		assert!(requests[0].contains("deduplicate=false"));
+		assert!(requests[0].contains("git.rust-bitcoin.org/lightningdevkit/rust-lightning"));
+		assert!(requests[1].contains("?raw=true"));
+		let defs = tool_definitions();
+		assert_eq!(defs[0]["inputSchema"]["properties"]["deduplicate"]["default"], true);
+		assert_eq!(defs[1]["inputSchema"]["properties"]["raw"]["default"], false);
+	}
 }
 
 fn write_response(stdout: &mut std::io::Stdout, response: &JsonRpcResponse) -> Result<()> {

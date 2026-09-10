@@ -28,3 +28,6 @@ async-trait = "0.1"
 url = "2"
 git2 = { workspace = true }
 tempfile = "3"
+
+[dev-dependencies]
+rusqlite = { workspace = true }

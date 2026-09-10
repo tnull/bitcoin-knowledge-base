@@ -246,11 +246,38 @@ pub async fn store_page(
 		.clone()
 		.or_else(|| page.checkpoint.clone())
 		.or_else(|| previous.map(str::to_owned));
+	let state = SyncState {
+		source_id: source_id.into(),
+		source_type: source_id.split(':').next().unwrap_or("unknown").into(),
+		source_repo: None,
+		last_cursor: cursor.clone(),
+		last_synced_at: Some(Utc::now()),
+		next_run_at: None,
+		status: SyncStatus::Ok,
+		error_message: None,
+		retry_count: 0,
+		items_found: page.documents.len() as i32,
+	};
+	if source_id == "reconcile:v1" {
+		let ids: Vec<_> = page.documents.iter().map(|doc| doc.id.clone()).collect();
+		store
+			.reconcile_page(&ids, &state, |doc| {
+				let output = enrichment::enrich_document(doc);
+				(output.references, output.concept_tags)
+			})
+			.await?;
+		return Ok(cursor);
+	}
 	let mut references = page.references.clone();
+	// Forge adapters' legacy body parsing has no origin context. Re-extract
+	// their references below while keeping non-forge source-specific edges.
+	references.retain(|r| {
+		!r.from_doc_id.starts_with("github_") && !r.from_doc_id.starts_with("forgejo_")
+	});
 	let mut mentions = Vec::new();
 	for doc in &page.documents {
-		if let Some(body) = &doc.body {
-			let output = enrichment::enrich(&doc.id, body, doc.source_repo.as_deref());
+		if doc.body.is_some() {
+			let output = enrichment::enrich_document(doc);
 			for reference in output.references {
 				if !references.iter().any(|r| {
 					r.from_doc_id == reference.from_doc_id
@@ -279,18 +306,6 @@ pub async fn store_page(
 			});
 		}
 	}
-	let state = SyncState {
-		source_id: source_id.into(),
-		source_type: source_id.split(':').next().unwrap_or("unknown").into(),
-		source_repo: None,
-		last_cursor: cursor.clone(),
-		last_synced_at: Some(Utc::now()),
-		next_run_at: None,
-		status: SyncStatus::Ok,
-		error_message: None,
-		retry_count: 0,
-		items_found: page.documents.len() as i32,
-	};
 	store.commit_page(&page.documents, &references, &mentions, &state).await?;
 	Ok(cursor)
 }

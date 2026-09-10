@@ -117,6 +117,7 @@ pub async fn serve(state: AppState, addr: SocketAddr) -> Result<()> {
 /// Query parameters for the search endpoint.
 #[derive(Debug, Deserialize)]
 struct SearchQuery {
+	deduplicate: Option<bool>,
 	q: String,
 	source_type: Option<String>,
 	source_repo: Option<String>,
@@ -145,6 +146,7 @@ async fn search(
 	let before = query.before.as_ref().and_then(|s| parse_datetime(s));
 
 	let params = SearchParams {
+		deduplicate: query.deduplicate,
 		query: query.q,
 		source_type: source_types,
 		source_repo: source_repos,
@@ -167,13 +169,25 @@ async fn search(
 	}
 }
 
-async fn get_document(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+#[derive(Deserialize, Default)]
+struct DocumentQuery {
+	raw: Option<bool>,
+}
+
+async fn get_document(
+	State(state): State<AppState>, Path(id): Path<String>, Query(query): Query<DocumentQuery>,
+) -> impl IntoResponse {
 	// The route uses a catch-all `{*id}` so that document IDs containing `/`
 	// (e.g. `github_pr:lightningdevkit/ldk-node:4463`) survive even when a
 	// reverse proxy decodes `%2F` before forwarding. Strip a potential leading
 	// `/` that the catch-all may include.
 	let id = id.strip_prefix('/').unwrap_or(&id);
-	match state.store.get_document(id).await {
+	let result = if query.raw.unwrap_or(false) {
+		state.store.get_raw_document(id).await
+	} else {
+		state.store.get_document(id).await
+	};
+	match result {
 		Ok(Some(ctx)) => (StatusCode::OK, Json(serde_json::to_value(ctx).unwrap())),
 		Ok(None) => {
 			(StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "document not found" })))
@@ -505,33 +519,22 @@ async fn admin_reenrich_source_type(
 	let st = source_type.clone();
 	tokio::spawn(async move {
 		let mut enriched = 0u64;
-		for (doc_id, body, source_repo) in &docs {
-			if let Some(body) = body {
-				let output = bkb_ingest::enrichment::enrich(doc_id, body, source_repo.as_deref());
-
-				if let Err(e) = store.delete_refs_from(doc_id).await {
-					tracing::warn!(doc_id, error = %e, "failed to delete refs during re-enrich");
-					progress.done.fetch_add(1, Ordering::Relaxed);
-					continue;
+		for (doc_id, _, _) in &docs {
+			let result = async {
+				if let Some(ctx) = store.get_raw_document(doc_id).await? {
+					let output = bkb_ingest::enrichment::enrich_document(&ctx.document);
+					store
+						.replace_enrichment(doc_id, &output.references, &output.concept_tags)
+						.await?;
 				}
-				for reference in &output.references {
-					if let Err(e) = store.insert_reference(reference).await {
-						tracing::warn!(doc_id, error = %e, "failed to insert ref during re-enrich");
-					}
-				}
-
-				if let Err(e) = store.delete_concept_mentions(doc_id).await {
-					tracing::warn!(doc_id, error = %e, "failed to delete concepts during re-enrich");
-					progress.done.fetch_add(1, Ordering::Relaxed);
-					continue;
-				}
-				for (slug, confidence) in &output.concept_tags {
-					if let Err(e) = store.upsert_concept_mention(doc_id, slug, *confidence).await {
-						tracing::warn!(doc_id, slug, error = %e, "failed to upsert concept during re-enrich");
-					}
-				}
-
-				enriched += 1;
+				Ok::<_, anyhow::Error>(())
+			}
+			.await;
+			match result {
+				Ok(()) => enriched += 1,
+				Err(e) => {
+					tracing::warn!(doc_id,error=%e,"re-enrichment failed; previous edges retained")
+				},
 			}
 			progress.done.fetch_add(1, Ordering::Relaxed);
 		}
@@ -608,4 +611,61 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
 			"by_type": by_type,
 		}
 	}))
+}
+
+#[cfg(test)]
+mod cross_forge_tests {
+	use super::*;
+	use bkb_core::model::Document;
+	async fn json(response: impl IntoResponse) -> serde_json::Value {
+		let response = response.into_response();
+		assert_eq!(response.status(), StatusCode::OK);
+		serde_json::from_slice(
+			&axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+		)
+		.unwrap()
+	}
+	#[tokio::test]
+	async fn rest_exposes_canonical_and_raw_records() {
+		let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+		let mut gh:Document=serde_json::from_value(serde_json::json!({
+			"id":"github_issue:lightningdevkit/rust-lightning:1","source_type":"github_issue","source_repo":"lightningdevkit/rust-lightning","source_id":"1",
+			"title":"Electrum","body":"Identical original content","author":"alice","created_at":"2026-08-08T01:02:03Z"
+		})).unwrap();
+		store.upsert_document(&gh).await.unwrap();
+		gh.source_type = SourceType::ForgejoIssue;
+		gh.source_repo =
+			Some(bkb_core::repository::forgejo_identity("lightningdevkit/rust-lightning"));
+		gh.id = Document::make_id(&gh.source_type, gh.source_repo.as_deref(), "1");
+		store.upsert_document(&gh).await.unwrap();
+		let state = AppState {
+			store,
+			metrics: None,
+			admin_password: None,
+			reenrich_jobs: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+		};
+		let old = "github_issue:lightningdevkit/rust-lightning:1";
+		let canonical = json(
+			get_document(State(state.clone()), Path(old.into()), Query(DocumentQuery::default()))
+				.await,
+		)
+		.await;
+		assert_eq!(canonical["document"]["id"], gh.id);
+		assert_eq!(canonical["provenance"].as_array().unwrap().len(), 2);
+		let raw = json(
+			get_document(
+				State(state.clone()),
+				Path(old.into()),
+				Query(DocumentQuery { raw: Some(true) }),
+			)
+			.await,
+		)
+		.await;
+		assert_eq!(raw["document"]["id"], old);
+		let query: SearchQuery =
+			serde_json::from_value(serde_json::json!({"q":"Electrum","deduplicate":false}))
+				.unwrap();
+		let results = json(search(State(state), Query(query)).await).await;
+		assert_eq!(results["results"].as_array().unwrap().len(), 2);
+	}
 }

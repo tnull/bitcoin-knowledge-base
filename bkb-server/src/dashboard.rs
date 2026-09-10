@@ -109,7 +109,36 @@ pub async fn metrics_endpoint(
 	};
 
 	let doc_stats = state.store.get_stats().await.unwrap_or_default();
-	let body = metrics.render_prometheus(&doc_stats);
+	let mut body = metrics.render_prometheus(&doc_stats);
+	if let Ok(stats) = state.store.reconciliation_stats().await {
+		for (name, count) in stats {
+			body.push_str(&format!("# TYPE bkb_{name} gauge\nbkb_{name} {count}\n"));
+		}
+	}
+	if let Ok(states) = state.store.get_all_sync_states().await {
+		body.push_str("# TYPE bkb_source_window_lag_seconds gauge\n");
+		for source in states {
+			let window = source
+				.last_cursor
+				.as_deref()
+				.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());
+			let date = window
+				.as_ref()
+				.and_then(|v| v[if v["complete"] == true { "until" } else { "since" }].as_str())
+				.and_then(bkb_core::model::parse_datetime);
+			if let Some(date) = date {
+				let id = source
+					.source_id
+					.replace('\\', "\\\\")
+					.replace('"', "\\\"")
+					.replace('\n', "\\n");
+				body.push_str(&format!(
+					"bkb_source_window_lag_seconds{{source=\"{id}\"}} {}\n",
+					(chrono::Utc::now() - date).num_seconds().max(0)
+				));
+			}
+		}
+	}
 	(StatusCode::OK, [("content-type", "text/plain; version=0.0.4; charset=utf-8")], body)
 }
 

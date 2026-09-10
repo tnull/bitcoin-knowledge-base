@@ -29,6 +29,7 @@ use bkb_ingest::sources::irc::IrcLogSyncSource;
 use bkb_ingest::sources::mail_archive::MailArchiveSyncSource;
 use bkb_ingest::sources::mailing_list::MailingListSyncSource;
 use bkb_ingest::sources::optech::OptechNewsletterSyncSource;
+use bkb_ingest::sources::reconcile::ReconcileSyncSource;
 use bkb_ingest::sources::specs::{
 	BipSyncSource, BlipSyncSource, BoltSyncSource, LudSyncSource, NutSyncSource,
 };
@@ -176,6 +177,19 @@ async fn main() -> Result<()> {
 		let repo_cache = Arc::new(create_repo_cache(&cli, Arc::clone(&forgejo))?);
 		let rate_limiter = Arc::new(RateLimiter::new(200));
 		let queue = Arc::new(JobQueue::new(Arc::clone(&rate_limiter), Arc::clone(&store), metrics));
+		let reconcile = ReconcileSyncSource::new(Arc::clone(&store));
+		let interval = reconcile.poll_interval();
+		queue
+			.add_job(SyncJob {
+				source_id: reconcile.name().into(),
+				source: Box::new(reconcile),
+				priority: Priority::Low,
+				cursor: None,
+				next_run: Instant::now(),
+				retry_count: 0,
+				base_interval: interval,
+			})
+			.await;
 
 		// Register sync sources from config
 		let repos = config.github_repos();
@@ -464,6 +478,8 @@ async fn main() -> Result<()> {
 		// +8 for mailing lists (bitcoindev + lightning-dev), BIPs, BOLTs, bLIPs, LUDs, NUTs, Optech
 		// +1 for BitcoinTalk
 		let total_sources = repos.len() * 3 // issues + comments + commits
+			+ config.github_review_repos().len() * 5 // GitHub reviews + Forgejo
+			+ 1 // resumable local reconciliation
 			+ config.irc_channels().len()
 			+ if config.sync_delving() { 1 } else { 0 }
 			+ if config.sync_bitcointalk() { 1 } else { 0 }
@@ -496,7 +512,9 @@ async fn run_single_source(
 	let rate_limiter = Arc::new(RateLimiter::new(200));
 	let token = cli.github_token.clone();
 
-	let source: Box<dyn SyncSource> = if let Some(rest) = spec.strip_prefix("forgejo:") {
+	let source: Box<dyn SyncSource> = if spec == "reconcile" {
+		Box::new(ReconcileSyncSource::new(Arc::clone(store)))
+	} else if let Some(rest) = spec.strip_prefix("forgejo:") {
 		let (repo, kind) = rest.rsplit_once(':').unwrap_or((rest, "issues"));
 		let repo = repo.strip_prefix("git.rust-bitcoin.org/").unwrap_or(repo);
 		anyhow::ensure!(

@@ -1,4 +1,5 @@
 pub mod enrichment;
+pub mod forge_refs;
 pub mod html_util;
 pub mod metrics;
 pub mod queue;

@@ -25,4 +25,5 @@ tracing = { workspace = true }
 async-trait = "0.1"
 
 [dev-dependencies]
+rusqlite = { workspace = true, features = ["hooks"] }
 tokio = { workspace = true, features = ["full", "macros"] }
