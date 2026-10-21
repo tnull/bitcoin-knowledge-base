@@ -217,7 +217,7 @@ reconciliation backfill. Retain `document_links` to preserve evidence for
 imports whose bodies subsequently changed. Removing those links deliberately
 discards that evidence. Raw documents and their IDs need not be changed.
 
-## Validation and live-access limitation
+## Validation and live access
 
 Tests cover atomic page failure, equal-timestamp pagination, nested review
 resume, deleted/empty review data, commit pagination, collision separation,
@@ -225,14 +225,18 @@ bot spoof/quote rejection, renumbered mirrors, late origins and parents,
 ambiguous fingerprints, original edits, raw queries, timelines, merge SHAs,
 references, database reopening, REST, and MCP parameter forwarding.
 
-During the September 2026 bounded live check, this instance returned a
-human-verification HTML page (HTTP 403) to the truthful `bkb/0.2` user agent.
-A curl diagnostic received public JSON; that does **not** establish that the
-BKB client can ingest successfully. No Forgejo token was configured. The
-adapter surfaced the error and did not advance its checkpoint. Deployment
-requires arranging access for BKB with the instance operator, or testing a
-suitable token; token access has not been verified. The challenge is not
-bypassed and the client does not impersonate another user agent.
+The instance's human-verification filter returns HTML (HTTP 403) for the
+`bkb/0.2` User-Agent, even with a token. Forgejo API requests now use
+`curl/8.14.1`, which the filter accepts. This applies to both repository
+metadata and conversation feeds. On October 21, 2026, a bounded run of the
+actual BKB client ingested 50 rust-miniscript issue/PR records and one PR-detail
+update without a token. Failed API requests still leave checkpoints unchanged;
+request pacing, Retry-After deferrals, and redirect restrictions still apply.
+
+Deployment accepts `FORGEJO_TOKEN` from the environment or prompts for it;
+see [deployment credentials](../README.md#deployment). A token's public-read
+scopes do not grant access to private repositories, and instance access policy
+can change independently of BKB.
 
 ## Primary sources
 

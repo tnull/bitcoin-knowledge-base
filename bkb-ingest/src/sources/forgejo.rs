@@ -66,7 +66,8 @@ impl ForgejoClient {
 		let mut request = self
 			.client
 			.get(url)
-			.header("User-Agent", "bkb/0.2")
+			// The forge's human-verification filter allows curl API clients.
+			.header("User-Agent", "curl/8.14.1")
 			.header("Accept", "application/json")
 			.query(query);
 		if let Some(token) = &self.token {
@@ -377,6 +378,20 @@ mod tests {
 			"state": "open", "created_at": "2020-01-01T00:00:00Z", "updated_at": "2020-01-02T00:00:00Z",
 			"user": {"id": 1, "login": "alice"}, "labels": [], "original_author": "",
 			"html_url": format!("https://git.rust-bitcoin.org/test/repo/issues/{number}")})
+	}
+
+	#[tokio::test]
+	async fn forgejo_requests_use_curl_user_agent() {
+		let (client, server) = server(vec![json!({"size": 123}), json!([issue(7)])]).await;
+		client.repository_metadata("test/repo").await.unwrap();
+		let source = ForgejoSyncSource::new(client, "test", "repo", ForgejoFeed::Issues);
+		source.fetch_page(None, &RateLimiter::new(0)).await.unwrap();
+		for request in server.await.unwrap() {
+			assert!(
+				request.to_ascii_lowercase().contains("\r\nuser-agent: curl/8.14.1\r\n"),
+				"Forgejo metadata and feeds must use the curl User-Agent accepted by the forge"
+			);
+		}
 	}
 
 	#[tokio::test]

@@ -64,6 +64,25 @@ cargo run -p bkb-server -- --no-ingest --db bkb.db
 
 The HTTP API is available at `http://127.0.0.1:3000` by default.
 
+## Deployment
+
+Run `./contrib/deploy.sh` to build and deploy to the configured VPS. It asks for
+`GITHUB_TOKEN`, `FORGEJO_TOKEN`, and `BKB_ADMIN_PASSWORD` with input hidden when
+they are unset in the environment. Both tokens must be nonempty. An empty admin
+password disables the admin endpoints; export `BKB_ADMIN_PASSWORD=''` to choose
+that without a prompt. For unattended deployment, set all three variables.
+
+Use a Forgejo token with **Public only** access and **Read Repository**
+(`read:repository`) plus **Read Issue** (`read:issue`) permissions; see
+[Forgejo token scopes](https://forgejo.org/docs/latest/user/authentication/token-scope/).
+The script sends credentials over SSH stdin and installs them in the root-owned
+`/etc/bkb-server.env` with mode `0600`, which the systemd service reads at startup.
+
+The build uses the checked-in lockfile and honors `CARGO_TARGET_DIR`. If unset,
+the script creates a fresh build directory under `/tmp`. Before upgrading,
+back up the production database consistently and test the upgrade on that copy;
+see [upgrade checks and rollback](docs/FORGEJO.md#backfill-and-operations).
+
 ## API Endpoints
 
 | Endpoint | Description |
