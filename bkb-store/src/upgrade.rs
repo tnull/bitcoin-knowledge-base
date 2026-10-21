@@ -39,7 +39,9 @@ fn migrate(conn: &mut Connection, seed: impl FnOnce(&Connection) -> Result<()>) 
 	let upgrading = populated && version == 0;
 	let mut protected = Vec::new();
 	if upgrading {
+		tracing::info!("starting stored-data upgrade; validating existing data before commit");
 		validate_data(&tx).context("legacy data is not readable; refusing upgrade")?;
+		tracing::info!("stored-data validation complete; protecting existing rows");
 	}
 	if populated {
 		for table in LEGACY_TABLES.iter().chain(ADDED_TABLES) {
@@ -62,9 +64,13 @@ fn migrate(conn: &mut Connection, seed: impl FnOnce(&Connection) -> Result<()>) 
 		}
 	}
 	// These statements add tables/indexes; they never rewrite source records.
+	if upgrading {
+		tracing::info!("adding database tables and indexes");
+	}
 	tx.execute_batch(SCHEMA_SQL).context("database schema upgrade failed")?;
 	seed(&tx).context("database concept seeding failed")?;
 	if upgrading {
+		tracing::info!("validating upgraded schema and full-text index");
 		validate_schema(&tx, VERSION)?;
 		validate_fts(&tx)?;
 	}
@@ -80,6 +86,9 @@ fn migrate(conn: &mut Connection, seed: impl FnOnce(&Connection) -> Result<()>) 
 	}
 	tx.pragma_update(None, "user_version", VERSION)?;
 	tx.commit()?;
+	if upgrading {
+		tracing::info!(version = VERSION, "stored-data upgrade committed");
+	}
 	Ok(())
 }
 
@@ -169,16 +178,20 @@ fn validate_fts(conn: &Connection) -> Result<()> {
 }
 
 fn validate_data(conn: &Connection) -> Result<()> {
+	tracing::info!("checking SQLite integrity");
 	let mut check = conn.prepare("PRAGMA quick_check")?;
 	for result in check.query_map([], |r| r.get::<_, String>(0))? {
 		let result = result?;
 		ensure!(result == "ok", "database integrity check failed: {result}");
 	}
+	tracing::info!("checking foreign keys");
 	let violation: Option<String> =
 		conn.query_row("PRAGMA foreign_key_check", [], |r| r.get(0)).optional()?;
 	ensure!(violation.is_none(), "database has broken foreign keys in {violation:?}");
+	tracing::info!("validating stored documents");
 	let mut stmt = conn.prepare("SELECT id,source_type,source_repo,source_id,title,body,author,author_id,created_at,updated_at,parent_id,metadata,seq FROM documents")?;
 	let mut records = stmt.query([])?;
+	let mut checked = 0_u64;
 	while let Some(row) = records.next()? {
 		let id: String = row.get(0)?;
 		let kind: String = row.get(1)?;
@@ -202,7 +215,12 @@ fn validate_data(conn: &Connection) -> Result<()> {
 				.with_context(|| format!("invalid metadata JSON in document {id}"))?;
 		}
 		let _: Option<i64> = row.get(12)?;
+		checked += 1;
+		if checked % 100_000 == 0 {
+			tracing::info!(documents = checked, "stored-document validation progress");
+		}
 	}
+	tracing::info!(documents = checked, "stored-document validation complete");
 	// Read the remaining tables using their public reader's SQLite types. Opaque
 	// checkpoints and optional legacy values are preserved without reinterpretation.
 	for (table, text, required, integers, floats) in [
@@ -217,8 +235,10 @@ fn validate_data(conn: &Connection) -> Result<()> {
 		if !table_exists(conn, table)? {
 			continue;
 		}
+		tracing::info!(table, "validating stored table");
 		let mut stmt = conn.prepare(&format!("SELECT * FROM {table}"))?;
 		let mut records = stmt.query([])?;
+		let mut checked = 0_u64;
 		while let Some(row) = records.next()? {
 			for col in text {
 				let value: Option<String> = row.get(*col)?;
@@ -233,8 +253,14 @@ fn validate_data(conn: &Connection) -> Result<()> {
 			for col in floats {
 				let _: Option<f64> = row.get(*col)?;
 			}
+			checked += 1;
+			if checked % 100_000 == 0 {
+				tracing::info!(table, rows = checked, "stored-table validation progress");
+			}
 		}
+		tracing::info!(table, rows = checked, "stored-table validation complete");
 	}
+	tracing::info!("checking full-text index against stored documents");
 	validate_fts(conn)?;
 	Ok(())
 }

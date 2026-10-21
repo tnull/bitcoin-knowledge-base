@@ -46,7 +46,10 @@ fi"#,
 			"scp",
 			r#"printf '%s\n' "$@" >> "$DEPLOY_TEST_ROOT/scp-args"
 case "$1" in
-    */bkb-server) cp "$1" "$DEPLOY_TEST_ROOT/uploaded-binary" ;;
+    */bkb-server)
+        cp "$1" "$DEPLOY_TEST_ROOT/uploaded-binary"
+        cp "$1" "$DEPLOY_TEST_ROOT/bkb-server.new"
+        ;;
 esac"#,
 		);
 		deployment.stub(
@@ -58,8 +61,37 @@ if [[ ${2:-} == *'/etc/bkb-server.env'* ]]; then
     command=${2//\/etc\/bkb-server.env/$DEPLOY_TEST_ROOT\/remote.env}
     bash -c "$command"
 else
-    cat >> "$DEPLOY_TEST_ROOT/ssh-script"
+    script=$(cat)
+    printf '%s\n' "$script" >> "$DEPLOY_TEST_ROOT/ssh-script"
+    if [[ $script == *'systemctl restart'* ]]; then
+        script=${script//\/opt\/bkb/$DEPLOY_TEST_ROOT}
+        shift
+        "$@" <<< "$script"
+    fi
 fi"#,
+		);
+		deployment.stub(
+			"systemctl",
+			r#"printf '%s\n' "$*" >> "$DEPLOY_TEST_ROOT/systemctl-calls"
+if [[ $1 == is-active && ${MOCK_HEALTH:-ready} == crashed ]]; then exit 3; fi"#,
+		);
+		deployment.stub("journalctl", "printf 'startup diagnostics\\n'");
+		deployment.stub("sleep", "exit 0");
+		deployment.stub(
+			"curl",
+			r#"if [[ $* == *https://* ]]; then
+    if [[ ${MOCK_PUBLIC_FAILURE:-0} == 1 ]]; then exit 22; fi
+    exit 0
+fi
+count=0
+if [[ -f "$DEPLOY_TEST_ROOT/health-attempts" ]]; then
+    count=$(cat "$DEPLOY_TEST_ROOT/health-attempts")
+fi
+printf '%s' "$((count + 1))" > "$DEPLOY_TEST_ROOT/health-attempts"
+case ${MOCK_HEALTH:-ready} in
+    crashed|timeout) exit 7 ;;
+    delayed) if (( count < 2 )); then exit 7; fi ;;
+esac"#,
 		);
 		deployment
 	}
@@ -218,4 +250,36 @@ fn failed_credential_installation_never_restarts_service() {
 		"must stop if credentials cannot be installed"
 	);
 	assert!(!deployment.read("ssh-script").contains("systemctl restart"));
+}
+
+#[test]
+fn waits_for_http_readiness_before_reporting_success() {
+	let deployment = Deployment::new();
+	let mut env = CREDENTIALS.to_vec();
+	env.push(("MOCK_HEALTH", "delayed"));
+	assert_success(&deployment.run(&env, ""));
+	assert_eq!(deployment.read("health-attempts"), "3", "must wait for the API to respond");
+}
+
+#[test]
+fn startup_failure_or_timeout_cannot_report_success() {
+	for mode in ["crashed", "timeout"] {
+		let deployment = Deployment::new();
+		let mut env = CREDENTIALS.to_vec();
+		env.extend([("MOCK_HEALTH", mode), ("DEPLOY_HEALTH_TIMEOUT", "1")]);
+		let output = deployment.run(&env, "");
+		assert!(!output.status.success(), "an unavailable API must fail deployment: {mode}");
+		assert!(String::from_utf8_lossy(&output.stdout).contains("startup diagnostics"));
+		assert!(!String::from_utf8_lossy(&output.stdout).contains("deployed and running"));
+	}
+}
+
+#[test]
+fn public_proxy_failure_cannot_report_success() {
+	let deployment = Deployment::new();
+	let mut env = CREDENTIALS.to_vec();
+	env.push(("MOCK_PUBLIC_FAILURE", "1"));
+	let output = deployment.run(&env, "");
+	assert!(!output.status.success(), "a public HTTP failure must fail deployment");
+	assert!(String::from_utf8_lossy(&output.stderr).contains("public health check failed"));
 }

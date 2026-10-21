@@ -83,6 +83,14 @@ the script creates a fresh build directory under `/tmp`. Before upgrading,
 back up the production database consistently and test the upgrade on that copy;
 see [upgrade checks and rollback](docs/FORGEJO.md#backfill-and-operations).
 
+Deployment waits for the local HTTP health check, then checks the public URL
+before reporting success. The first database upgrade can take several minutes
+or longer on a large database; the proxy returns 502 until HTTP starts. Follow
+the upgrade stages with `journalctl -fu bkb-server` on the VPS. The readiness
+timeout defaults to 600 seconds and can be changed with `DEPLOY_HEALTH_TIMEOUT`.
+A timeout prints diagnostics and leaves the service running so an ongoing
+upgrade can finish.
+
 ## API Endpoints
 
 | Endpoint | Description |
