@@ -136,6 +136,30 @@ concept scores, including when ingestion updates a record after page fetch.
 Newly fetched pages reconcile in their own transaction. API-only mode does
 not run backfills.
 
+Database opening upgrades the legacy unversioned schema to SQLite
+`user_version=1` in one transaction, including concept seeding. Existing raw
+document values and row IDs, references, concept assignments, customized
+concepts, change-log sequences, and opaque feed cursors are retained. Legacy
+source types remain readable through the document and search APIs. There is
+no source-record reset, rename, or full-text rebuild during the upgrade.
+
+The upgrade refuses an unsupported version, incompatible table or FTS schema,
+unreadable source records, broken foreign keys, or an inconsistent full-text
+index. Schema changes and seeding roll back together on failure, including
+failure after new tables have been created. Write guards protect existing
+application records from updates, deletes, and replacements during opening;
+harmless additional indexes and audit triggers are permitted. Refusal leaves
+the previous schema, application data, schema version, and journal mode intact
+so the underlying problem can be investigated without automatic repair
+discarding evidence.
+
+The first upgrade scans existing rows and checks SQLite/FTS integrity, with
+time proportional to the database and index size and bounded memory usage.
+Subsequent opens check the schema and seed missing concepts without repeating
+the full data scan. This is an upgrade check, not continuous corruption
+monitoring. Restoring a backup remains the supported way to roll back a
+deployment that has already begun ingesting new source types.
+
 For bounded checks, use a disposable database and a task-specific Cargo target
 directory:
 

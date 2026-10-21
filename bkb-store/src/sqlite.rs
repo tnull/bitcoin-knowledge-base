@@ -11,7 +11,6 @@ use bkb_core::model::{
 	Document, DocumentContext, RefType, Reference, SearchParams, SearchResult, SearchResults,
 	SourceType, SyncState, SyncStatus,
 };
-use bkb_core::schema::SCHEMA_SQL;
 use bkb_core::store::KnowledgeStore;
 
 /// SQLite-backed storage for the Bitcoin Knowledge Base.
@@ -35,11 +34,10 @@ impl SqliteStore {
 		Self::init(conn)
 	}
 
-	fn init(conn: Connection) -> Result<Self> {
-		conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+	fn init(mut conn: Connection) -> Result<Self> {
 		conn.execute_batch("PRAGMA foreign_keys=ON;")?;
-		conn.execute_batch(SCHEMA_SQL)?;
-		Self::seed_concepts(&conn)?;
+		crate::upgrade::initialize(&mut conn, Self::seed_concepts)?;
+		conn.execute_batch("PRAGMA journal_mode=WAL;")?;
 		Ok(Self { conn: Arc::new(Mutex::new(conn)) })
 	}
 
