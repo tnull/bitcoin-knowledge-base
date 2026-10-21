@@ -68,7 +68,7 @@ async fn handle_request(store: &impl KnowledgeStore, request: &JsonRpcRequest) -
 				},
 				"serverInfo": {
 					"name": "bkb-mcp",
-					"version": "0.2.0"
+					"version": env!("CARGO_PKG_VERSION")
 				}
 			})),
 			error: None,
@@ -505,6 +505,29 @@ fn tool_definitions() -> serde_json::Value {
 			}
 		}
 	])
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[tokio::test]
+	async fn initialize_reports_package_version() {
+		let store = crate::remote_store::RemoteApiStore::new("http://127.0.0.1:1");
+		let request = JsonRpcRequest {
+			jsonrpc: "2.0".into(),
+			id: Some(serde_json::json!(1)),
+			method: "initialize".into(),
+			params: None,
+		};
+		let response = handle_request(&store, &request).await;
+		assert!(response.error.is_none());
+		assert_eq!(
+			response.result.unwrap()["serverInfo"]["version"],
+			env!("CARGO_PKG_VERSION"),
+			"MCP initialization must identify the installed package version"
+		);
+	}
 }
 
 #[cfg(test)]

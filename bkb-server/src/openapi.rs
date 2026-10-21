@@ -5,12 +5,27 @@ pub async fn openapi_spec() -> Json<serde_json::Value> {
 	Json(spec())
 }
 
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[tokio::test]
+	async fn openapi_reports_package_version() {
+		let Json(spec) = openapi_spec().await;
+		assert_eq!(
+			spec["info"]["version"],
+			env!("CARGO_PKG_VERSION"),
+			"OpenAPI metadata must identify the installed package version"
+		);
+	}
+}
+
 fn spec() -> serde_json::Value {
 	serde_json::json!({
 		"openapi": "3.1.0",
 		"info": {
 			"title": "Bitcoin Knowledge Base (BKB)",
-			"version": "0.2.0",
+			"version": env!("CARGO_PKG_VERSION"),
 			"description": "Indexed knowledge from across the Bitcoin and Lightning development ecosystem. Search BIPs, BOLTs, bLIPs, LUDs, NUTs, GitHub issues/PRs/commits, mailing lists, IRC logs, Delving Bitcoin, BitcoinTalk, and Optech newsletters."
 		},
 		"servers": [

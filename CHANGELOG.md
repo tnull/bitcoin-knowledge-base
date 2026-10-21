@@ -4,11 +4,68 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-21
+
 ### Added
+- Forgejo ingestion for issues, PRs, conversation comments, reviews, and
+  inline review comments from ten migrated LDK and rust-bitcoin repositories,
+  including rust-miniscript and rapid-gossip-sync-server. Historical GitHub
+  ingestion remains enabled; see [repository mappings](docs/FORGEJO.md).
+- GitHub review and inline review-comment backfills for migrated repositories.
+- Index `bitcoin-core/bitcoincore.org`,
+  `bitcoin-core/bitcoin-maintainer-tools`,
+  `rust-bitcoin/rust-bitcoin-maintainer-tools`, and
+  `lightningdevkit/ldk-fuzzing-corpus`.
 - Index `BitcoinAndLightningLayerSpecs/lsp` (LSPS) GitHub repository for
   historical issues, PRs, and discussions. The repository is archived, but
   its past technical discussions remain valuable context for Lightning
   Service Provider specifications.
+- REST and MCP source provenance, `matched_source_id` for search snippets,
+  `deduplicate=false` searches, and `raw=true` document reads.
+- Metrics for raw and canonical documents, verified and unresolved links,
+  and ingestion lag.
+
+### Changed
+- Search collapses verified GitHub/Forgejo copies before applying limits.
+  Document lookups, references, and timelines resolve verified aliases while
+  preserving raw records and IDs. Logical repository filters cover both
+  forges; explicit host names select one source's membership.
+- Git history follows each migrated repository's primary forge while retaining
+  existing commit IDs and cached history.
+- Stored-data upgrades validate schema compatibility, record readability,
+  foreign keys, and SQLite/full-text integrity. Unsafe upgrades are refused;
+  schema changes and seeding are atomic and protect existing application data.
+- Deployment prompts for unset GitHub/Forgejo tokens and the admin password,
+  installs credentials in a protected service environment file, and waits for
+  local and public API readiness. Startup failures include diagnostics, and
+  database upgrades log validation stages and row counts.
+- Update locked dependencies within the existing Rust 1.85 requirement.
+
+### Fixed
+- Commit backfills no longer skip older pages or advance past failed writes.
+  Legacy cursors are replayed while retaining existing records and enrichment.
+- Conversation feeds checkpoint pages atomically, resume nested review scans,
+  and retain local history when remote records disappear or Git fetches fail.
+- Cross-forge references and review permalinks retain their source context;
+  ambiguous or unverified matches remain separate.
+- Forgejo API requests use a curl User-Agent accepted by the instance's
+  human-verification filter, with shared request pacing and quota deferrals.
+- Deployment honors `CARGO_TARGET_DIR` and builds with the lockfile before
+  uploading the binary.
+- MCP initialization and OpenAPI metadata report the package version instead
+  of a stale hard-coded version.
+
+### Upgrade notes
+- This release adds public Rust struct fields and `SourceType` variants, so
+  downstream Rust callers may need changes. Update MCP clients alongside the
+  server and restart their connections: older clients cannot deserialize the
+  new Forgejo source types.
+- Existing databases upgrade additively, preserving stored documents, IDs,
+  references, concepts, change-log entries, and ingestion cursors. Back up
+  before upgrading. The first upgrade scans the database and full-text index
+  before HTTP starts, which can take a long time on large databases.
+- Rolling back after ingestion of new source types requires restoring a
+  pre-upgrade backup. See [upgrade details](docs/FORGEJO.md#backfill-and-operations).
 
 ## [0.2.1] - 2026-04-16
 
