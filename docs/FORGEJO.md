@@ -13,7 +13,11 @@ The explicit pairs in `bkb-core/src/repository.rs` are:
 | --- | --- |
 | lightningdevkit/rust-lightning | git.rust-bitcoin.org |
 | lightningdevkit/ldk-sample | git.rust-bitcoin.org |
+| lightningdevkit/rapid-gossip-sync-server | git.rust-bitcoin.org |
+| lightningdevkit/ldk-fuzzing-corpus | git.rust-bitcoin.org |
 | rust-bitcoin/rust-secp256k1 | git.rust-bitcoin.org |
+| rust-bitcoin/rust-miniscript | git.rust-bitcoin.org |
+| rust-bitcoin/rust-bitcoin-maintainer-tools | git.rust-bitcoin.org |
 | rust-bitcoin/rust-psbt | git.rust-bitcoin.org |
 | rust-bitcoin/corepc | git.rust-bitcoin.org |
 | rust-bitcoin/bitcoin-payment-instructions | git.rust-bitcoin.org |
@@ -21,6 +25,12 @@ The explicit pairs in `bkb-core/src/repository.rs` are:
 The development subset includes only ldk-sample. Repository names alone never
 establish a pair. The BDK repositories found on the forge were Git mirrors,
 not confirmed development migrations, and are not included.
+
+The October additions include [rust-miniscript](https://git.rust-bitcoin.org/rust-bitcoin/rust-miniscript),
+imported on October 19, and [rapid-gossip-sync-server](https://git.rust-bitcoin.org/lightningdevkit/rapid-gossip-sync-server),
+imported on October 9. The earlier migrations of rust-bitcoin-maintainer-tools
+and ldk-fuzzing-corpus are also registered. All four were verified as native
+repositories with their original GitHub locations on October 21, 2026.
 
 GitHub retains issue/comment polling and gains review-summary and inline-review
 feeds for these repositories. Forgejo supplies issues, PR descriptions/details,

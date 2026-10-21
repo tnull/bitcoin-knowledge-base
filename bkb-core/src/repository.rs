@@ -6,7 +6,11 @@ pub const FORGEJO_HOST: &str = "git.rust-bitcoin.org";
 pub const MIGRATED_REPOS: &[&str] = &[
 	"lightningdevkit/rust-lightning",
 	"lightningdevkit/ldk-sample",
+	"lightningdevkit/rapid-gossip-sync-server",
+	"lightningdevkit/ldk-fuzzing-corpus",
 	"rust-bitcoin/rust-secp256k1",
+	"rust-bitcoin/rust-miniscript",
+	"rust-bitcoin/rust-bitcoin-maintainer-tools",
 	"rust-bitcoin/rust-psbt",
 	"rust-bitcoin/corepc",
 	"rust-bitcoin/bitcoin-payment-instructions",

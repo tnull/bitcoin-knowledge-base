@@ -3,6 +3,58 @@ pub struct Config {
 	dev_subset: bool,
 }
 
+#[cfg(test)]
+mod tests {
+	use super::*;
+	const ADDITIONS: &[&str] = &[
+		"rust-bitcoin/rust-miniscript",
+		"lightningdevkit/rapid-gossip-sync-server",
+		"rust-bitcoin/rust-bitcoin-maintainer-tools",
+		"lightningdevkit/ldk-fuzzing-corpus",
+	];
+
+	#[test]
+	fn added_migrations_have_native_feeds_and_primary_git() {
+		let feeds = Config::new(false).github_review_repos();
+		for repo in ADDITIONS {
+			let (owner, name) = repo.split_once('/').unwrap();
+			assert!(feeds.contains(&(owner.into(), name.into())), "missing native feed for {repo}");
+			assert_eq!(
+				bkb_core::repository::primary_git_url(repo),
+				format!("https://git.rust-bitcoin.org/{repo}.git")
+			);
+			assert_eq!(
+				bkb_core::repository::logical_repo(&bkb_core::repository::forgejo_identity(repo)),
+				*repo
+			);
+		}
+		assert_eq!(
+			Config::new(true).github_review_repos(),
+			vec![("lightningdevkit".into(), "ldk-sample".into())]
+		);
+	}
+
+	#[test]
+	fn added_migrations_keep_github_history_and_one_git_stream() {
+		let repos = Config::new(false).github_repos();
+		for repo in ADDITIONS {
+			let (owner, name) = repo.split_once('/').unwrap();
+			assert_eq!(
+				repos.iter().filter(|(o, r)| o == owner && r == name).count(),
+				1,
+				"{repo} must have historical GitHub feeds and exactly one Git stream"
+			);
+		}
+		for repo in bkb_core::repository::MIGRATED_REPOS {
+			let (owner, name) = repo.split_once('/').unwrap();
+			assert!(
+				repos.contains(&(owner.into(), name.into())),
+				"migration lacks historical feeds: {repo}"
+			);
+		}
+	}
+}
+
 impl Config {
 	/// Review backfill starts with repositories whose development has moved.
 	pub fn github_review_repos(&self) -> Vec<(String, String)> {
@@ -36,6 +88,7 @@ impl Config {
 				("lightningdevkit".to_string(), "vss-server".to_string()),
 				("lightningdevkit".to_string(), "vss-client".to_string()),
 				("lightningdevkit".to_string(), "rapid-gossip-sync-server".to_string()),
+				("lightningdevkit".to_string(), "ldk-fuzzing-corpus".to_string()),
 				("lightningdevkit".to_string(), "ldk-swift".to_string()),
 				("lightningdevkit".to_string(), "ldk-review-club".to_string()),
 				("lightningdevkit".to_string(), "orange-sdk".to_string()),
@@ -50,6 +103,7 @@ impl Config {
 				("rust-bitcoin".to_string(), "rust-bitcoin".to_string()),
 				("rust-bitcoin".to_string(), "rust-secp256k1".to_string()),
 				("rust-bitcoin".to_string(), "rust-miniscript".to_string()),
+				("rust-bitcoin".to_string(), "rust-bitcoin-maintainer-tools".to_string()),
 				("rust-bitcoin".to_string(), "rust-bech32".to_string()),
 				("rust-bitcoin".to_string(), "rust-bech32-bitcoin".to_string()),
 				("rust-bitcoin".to_string(), "rust-psbt".to_string()),
